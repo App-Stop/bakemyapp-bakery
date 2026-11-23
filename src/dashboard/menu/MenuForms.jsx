@@ -1,18 +1,13 @@
 import { useEffect, useState } from 'react'
 import { changes, tenant, toMinor } from '../../lib/tenant'
-import { useTenant } from '../../lib/TenantContext'
 import { useRemote } from '../../lib/useRemote'
 import { Field, ErrorMessage, buttonClass } from '../shared/ApiUI'
 import { CatalogModal, CatalogField, DesignIcon } from '../shared/CatalogUI'
 import { SettingsToggle } from '../settings/SettingsToggle'
-import { categoryIcon, categoryIcons, saveCategoryIcon } from './categoryIcons'
 
 export function CategoryForm({ category, onClose, onSaved }) {
-  const { user } = useTenant()
-  const scope = user.tenant?.id || user.id
   const [name, setName] = useState(category.name || '')
   const [description, setDescription] = useState(category.description || '')
-  const [icon, setIcon] = useState(category.id ? categoryIcon(category, scope).id : 'donut')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const run = async (action) => { setBusy(true); setError(null); try { await action(); await onSaved(); onClose() } catch (err) { setError(err) } finally { setBusy(false) } }
@@ -21,11 +16,12 @@ export function CategoryForm({ category, onClose, onSaved }) {
     const body = { name: name.trim(), description: description.trim() || null }
     const patch = changes(category, body)
     run(async () => {
-      const result = category.id ? Object.keys(patch).length ? await tenant.patch(`menu/categories/${category.id}`, patch) : { data: category } : await tenant.post('menu/categories', body)
-      saveCategoryIcon(scope, result.data.id, icon)
+      if (category.id) {
+        if (Object.keys(patch).length) await tenant.patch(`menu/categories/${category.id}`, patch)
+      } else await tenant.post('menu/categories', body)
     })
   }
-  return <CatalogModal title={category.id ? 'Edit Category' : 'Add New Category'} description="Organize your baked goods under a new category." onClose={onClose} busy={busy}><form onSubmit={save} className="catalog-form"><ErrorMessage error={error} /><fieldset disabled={busy} className="catalog-form"><CatalogField label="Category Name" name="name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} errors={error?.fieldErrors} /><fieldset className="category-icon-options"><legend>Category Icon</legend><div className="category-icon-grid">{categoryIcons.map((item) => <button key={item.id} type="button" aria-label={`${item.name} icon`} aria-pressed={icon === item.id} onClick={() => setIcon(item.id)}><DesignIcon file={item.file} /></button>)}</div><p>Icon preference is saved on this device.</p></fieldset><details className="catalog-form-advanced"><summary>More category options</summary><div><Field label="Description" name="description" value={description} onChange={(event) => setDescription(event.target.value)} errors={error?.fieldErrors} />{category.id && <button type="button" className={buttonClass} onClick={() => { if (category.isActive) { if (window.confirm(`Switch off ${category.name}? Products in this category will no longer appear to customers.`)) run(() => tenant.delete(`menu/categories/${category.id}`)) } else run(() => tenant.patch(`menu/categories/${category.id}`, { isActive: true })) }}>{category.isActive ? 'Switch off' : 'Switch on'}</button>}</div></details><div className="catalog-form-footer"><button type="button" className="catalog-button" onClick={onClose}>Cancel</button><button className="catalog-button catalog-primary">{busy ? 'Saving…' : category.id ? 'Save Category' : 'Add Category'}</button></div></fieldset></form></CatalogModal>
+  return <CatalogModal title={category.id ? 'Edit Category' : 'Add New Category'} description="Organize your baked goods under a new category." onClose={onClose} busy={busy}><form onSubmit={save} className="catalog-form"><ErrorMessage error={error} /><fieldset disabled={busy} className="catalog-form"><CatalogField label="Category Name" name="name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} errors={error?.fieldErrors} /><details className="catalog-form-advanced"><summary>More category options</summary><div><Field label="Description" name="description" value={description} onChange={(event) => setDescription(event.target.value)} errors={error?.fieldErrors} />{category.id && <button type="button" className={buttonClass} onClick={() => { if (category.isActive) { if (window.confirm(`Switch off ${category.name}? Products in this category will no longer appear to customers.`)) run(() => tenant.delete(`menu/categories/${category.id}`)) } else run(() => tenant.patch(`menu/categories/${category.id}`, { isActive: true })) }}>{category.isActive ? 'Switch off' : 'Switch on'}</button>}</div></details><div className="catalog-form-footer"><button type="button" className="catalog-button" onClick={onClose}>Cancel</button><button className="catalog-button catalog-primary">{busy ? 'Saving…' : category.id ? 'Save Category' : 'Add Category'}</button></div></fieldset></form></CatalogModal>
 }
 
 async function validatePhoto(file) {

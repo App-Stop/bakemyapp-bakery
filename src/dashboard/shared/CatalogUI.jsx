@@ -2,15 +2,15 @@ import { useEffect, useRef } from 'react'
 import { Modal } from './ApiUI'
 import './catalog.css'
 
-export function DesignIcon({ file, className = '' }) {
-  return <img src={`/figma/catalog/${file}.svg`} alt="" aria-hidden="true" className={`design-icon ${className}`} />
+export function DesignIcon({ file, className = '', folder = 'catalog' }) {
+  return <img src={`/figma/${folder}/${file}.svg`} alt="" aria-hidden="true" className={`design-icon ${className}`} />
 }
 
 export function CatalogSearch({ label, placeholder, value, onChange }) {
   return <label className="catalog-search"><DesignIcon file="8a13e" /><input aria-label={label} placeholder={placeholder} value={value} onChange={(event) => onChange(event.target.value)} /></label>
 }
 
-export function CatalogModal({ title, description, wide, children, ...props }) {
+export function CatalogModal({ title, description, wide, children, className = '', ...props }) {
   const ref = useRef(null)
   useEffect(() => {
     const previous = document.activeElement
@@ -26,7 +26,7 @@ export function CatalogModal({ title, description, wide, children, ...props }) {
     dialog?.addEventListener('keydown', trap)
     return () => { dialog?.removeEventListener('keydown', trap); previous?.focus() }
   }, [])
-  return <Modal {...props} title={title} description={description} className={`catalog-modal ${wide ? 'catalog-modal-wide' : ''}`}><div ref={ref}>{children}</div></Modal>
+  return <Modal {...props} title={title} description={description} className={`catalog-modal ${wide ? 'catalog-modal-wide' : ''} ${className}`}><div ref={ref}>{children}</div></Modal>
 }
 
 export function CatalogField({ label, name, errors = {}, children, ...props }) {

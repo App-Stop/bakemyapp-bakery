@@ -56,7 +56,7 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
   const [activeTimeRange, setActiveTimeRange] = useState('7d')
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
-  const catalogDesign = activeNav === 'orders' || activeNav === 'menu'
+  const catalogDesign = ['orders', 'menu', 'branches'].includes(activeNav)
 
   const shopName = user.tenant?.name || state.shop?.name?.trim() || 'Your bakery'
   const shopTagline = state.shop?.tagline?.trim() || 'Freshly baked goods'
@@ -222,7 +222,7 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
                       : 'text-body hover:bg-[#f5f5f5] font-normal'
                   }`}
                 >
-                  {catalogDesign ? <DesignIcon file={isActive ? item.id === 'menu' ? 'b16db' : '7b7cb' : DESIGN_NAV_ICONS[item.id]} /> : <HugeiconsIcon
+                  {catalogDesign ? <DesignIcon folder={isActive && item.id === 'branches' ? 'branches' : 'catalog'} file={isActive ? { menu: 'b16db', orders: '7b7cb', branches: '0eeb5' }[item.id] : DESIGN_NAV_ICONS[item.id]} /> : <HugeiconsIcon
                     icon={Icon}
                     size={20}
                     color={isActive ? 'var(--brand)' : 'currentColor'}

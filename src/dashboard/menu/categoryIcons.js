@@ -14,6 +14,3 @@ export function categoryIcon(category, scope) {
   try { saved = localStorage.getItem(storageKey(scope, category.id)) } catch { /* Use the category name when storage is unavailable. */ }
   return categoryIcons.find((icon) => icon.id === saved) || categoryIcons.find((icon) => category.name?.toLowerCase().includes(icon.id)) || categoryIcons.find((icon) => icon.id === 'croissant')
 }
-export function saveCategoryIcon(scope, id, icon) {
-  try { localStorage.setItem(storageKey(scope, id), icon) } catch { /* Optional visual preference. */ }
-}

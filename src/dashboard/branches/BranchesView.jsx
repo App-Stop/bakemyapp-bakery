@@ -1,48 +1,70 @@
-import { useState } from 'react'
-import { can, dateTime, money, tenant } from '../../lib/tenant'
+﻿import { useState } from 'react'
+import { can, money, tenant } from '../../lib/tenant'
 import { useTenant } from '../../lib/TenantContext'
 import { useRemote } from '../../lib/useRemote'
-import { buttonClass, primaryClass, cardClass, ErrorMessage } from '../shared/ApiUI'
+import { ErrorMessage } from '../shared/ApiUI'
+import { CatalogSearch, DesignIcon } from '../shared/CatalogUI'
 import { BranchForm, BranchHours } from './BranchForm'
+import { loadOrderMetrics, rangeDates } from '../orders/orderMetrics'
+import { summarizeBranchOrders } from './branchMetrics'
+import './branches.css'
 
-function BranchOrderCount({ id }) {
-  const summary = useRemote(() => tenant.list('orders/summary', { branchId: id }), [id], { poll: 20000 })
-  return <div className="text-sm"><span>{summary.data?.data?.active ?? '—'} active orders</span><ErrorMessage error={summary.error} /></div>
+function BranchMetrics({ id, canViewOrders, stats, symbol }) {
+  const summary = useRemote(() => canViewOrders ? tenant.list('orders/summary', { branchId: id }) : Promise.resolve(null), [id, canViewOrders], { poll: canViewOrders ? 20000 : 0 })
+  const branch = stats?.branches[id]
+  const resolved = (branch?.completed || 0) + (branch?.cancelled || 0)
+  const performance = resolved ? Math.round(branch.completed / resolved * 100) : null
+  return <div><div className="branch-metrics">
+    <div><p>Sales</p><strong title="Collected revenue from today's orders">{stats ? money(branch?.revenue || 0, stats.symbol || symbol) : '—'}</strong></div>
+    <div><p>Active Orders</p><strong>{summary.data?.data?.active ?? '—'}</strong></div>
+    <div className={performance != null && performance < 80 ? 'branch-performance-warning' : ''}><p>Performance</p><strong title="Completed orders as a percentage of completed and cancelled orders today">{performance == null ? '—' : `${performance}%`}{performance != null && performance < 80 && <DesignIcon file="a581c" folder="branches" />}</strong></div>
+  </div><ErrorMessage error={summary.error} /></div>
 }
 
 export function BranchesView({ onNavigateToOrders }) {
   const { user, branding } = useTenant()
   const editable = can(user, 'branches:edit')
-  const [status, setStatus] = useState('active')
+  const [status, setStatus] = useState('all')
   const [q, setQ] = useState('')
   const [editor, setEditor] = useState(null)
   const [hours, setHours] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
-  const list = useRemote(() => tenant.list('branches', { status, q }), [status, q])
+  const list = useRemote(() => tenant.list('branches', { status: 'all' }), [])
+  const canViewOrders = can(user, 'orders:view')
+  const metrics = useRemote(() => canViewOrders ? loadOrderMetrics(rangeDates('Today'), summarizeBranchOrders) : Promise.resolve(null), [canViewOrders], { poll: canViewOrders ? 20000 : 0 })
   const plan = useRemote(() => can(user, 'plan:view') ? tenant.get('plan') : Promise.resolve(null), [user.id])
   const usage = plan.data?.data?.usage?.branches
-  const mutate = async (action) => {
+  const branches = list.data?.data || []
+  const counts = { all: branches.length, active: branches.filter((branch) => branch.isActive).length, inactive: branches.filter((branch) => !branch.isActive).length }
+  const rows = branches.filter((branch) => (status === 'all' || branch.isActive === (status === 'active')) && [branch.name, branch.addressLine1, branch.addressLine2, branch.area, branch.city].filter(Boolean).join(' ').toLowerCase().includes(q.trim().toLowerCase()))
+  const refresh = async () => { await Promise.all([list.refresh(), plan.refresh(), metrics.refresh()]) }
+  const edit = async (branch) => {
     setBusy(true); setError(null)
-    try { await action(); await list.refresh(); await plan.refresh() } catch (err) { setError(err) } finally { setBusy(false) }
+    try { setEditor((await tenant.get(`branches/${branch.id}`)).data) } catch (err) { setError(err) } finally { setBusy(false) }
   }
-  const edit = (branch) => mutate(async () => setEditor((await tenant.get(`branches/${branch.id}`)).data))
-  return <div className="mx-auto flex max-w-[1360px] flex-col gap-6">
-    <div className="flex flex-wrap items-center justify-between gap-4"><div><h1 className="text-[28px] font-semibold">Branches</h1><p className="text-sm text-muted">Manage your bakery locations, opening hours and ordering.</p>{usage && <p className="mt-2 text-sm">{usage.used} of {usage.limit ?? 'unlimited'} branches used</p>}</div>{editable && <button className={primaryClass} onClick={() => setEditor({})} disabled={usage?.limit != null && usage.used >= usage.limit}>Add Branch</button>}</div>
-    {usage?.limit != null && usage.used >= usage.limit && <p className="text-sm text-amber-800">Your plan allows {usage.limit} branches. Contact us to add more.</p>}
-    <div className="flex flex-wrap gap-3">{['active', 'inactive', 'all'].map((tab) => <button key={tab} className={status === tab ? primaryClass : buttonClass} onClick={() => setStatus(tab)}>{tab === 'all' ? 'All Branches' : tab === 'active' ? 'Active' : 'Inactive'}</button>)}<input aria-label="Search branches" className="rounded-full border border-[#e8e8e8] bg-white px-4 py-2" placeholder="Search name, area or city" value={q} onChange={(event) => setQ(event.target.value)} /><button className={buttonClass} onClick={list.refresh}>Refresh</button></div>
-    <ErrorMessage error={error || list.error || plan.error} />
-    {list.loading && <p role="status">Loading branches…</p>}
-    {!list.loading && !list.error && !list.data?.data?.length && <p className={cardClass}>No branches found.</p>}
-    <div className="grid gap-5 xl:grid-cols-2">{list.data?.data?.map((branch) => <article key={branch.id} className={`${cardClass} flex flex-col gap-4`}>
-      <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">{branch.name}</h2><span className={`rounded-full px-3 py-1 text-xs font-semibold ${branch.status === 'open' ? 'bg-green-50 text-green-700' : branch.status === 'paused' ? 'bg-amber-50 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>{branch.status === 'inactive' ? 'Switched off' : branch.status}</span></div>
-      <p className="text-sm text-muted">{[branch.addressLine1, branch.addressLine2, branch.area, branch.city].filter(Boolean).join(', ')}<br />{branch.phone}</p>
-      <div className="flex flex-wrap gap-3 text-sm">{branch.acceptsDelivery && <span>Delivery · {money(branch.deliveryFee, branding?.currencySymbol)}</span>}{branch.acceptsPickup && <span>Pickup</span>}<span>Minimum {money(branch.minimumOrder, branding?.currencySymbol)}</span><span>Ready in about {branch.prepTimeMinutes} min</span></div>
-      {can(user, 'orders:view') && <BranchOrderCount id={branch.id} />}
-      {branch.pausedAt && !branch.isAcceptingOrders && <p className="text-xs text-amber-800">Paused since {dateTime(branch.pausedAt)}</p>}
-      <div className="flex flex-wrap gap-2">{editable && <><button className={buttonClass} disabled={busy} onClick={() => edit(branch)}>Edit</button><button className={buttonClass} disabled={busy} onClick={() => mutate(async () => setHours((await tenant.get(`branches/${branch.id}`)).data))}>Opening hours</button>{branch.isActive ? <><button className={buttonClass} disabled={busy} onClick={() => { const paused = branch.isAcceptingOrders; if (!paused || window.confirm(`Customers will not be able to order from ${branch.name} until you resume orders.`)) mutate(() => tenant.post(`branches/${branch.id}/pause`, { paused })) }}>{branch.isAcceptingOrders ? 'Pause orders' : 'Resume orders'}</button><button className={buttonClass} disabled={busy} onClick={() => { if (window.confirm(`Switch off ${branch.name}? Its history will be kept.`)) mutate(() => tenant.delete(`branches/${branch.id}`)) }}>Switch off</button></> : <button className={buttonClass} disabled={busy} onClick={() => mutate(() => tenant.patch(`branches/${branch.id}`, { isActive: true }))}>Switch on</button>}</>}<button className={buttonClass} onClick={() => onNavigateToOrders(branch.id)}>View orders</button></div>
-    </article>)}</div>
-    {editor && <BranchForm key={editor.id || 'new'} branch={editor} onClose={() => setEditor(null)} onSaved={async (branch, created) => { setEditor(null); if (created) setHours(branch); await list.refresh(); await plan.refresh() }} />}
+  return <div className="catalog-page branches-page">
+    <header className="catalog-header"><div><h1>Branches</h1><p>Manage your bakery locations and employee access.</p></div>{editable && <button className="catalog-button catalog-primary" onClick={() => setEditor({})} disabled={usage?.limit != null && usage.used >= usage.limit}><DesignIcon file="8a223" />Add Branch</button>}</header>
+    <div className="branch-stats">
+      <section><p>Total Branches</p><strong>{list.data ? counts.all : '—'}</strong></section>
+      <section><p>Active</p><strong>{list.data ? counts.active : '—'}</strong></section>
+      <section><p>Avg. Revenue / Branch</p><strong title="Today's collected revenue divided by total branches">{metrics.data && list.data ? `${money(branches.length ? Math.round(metrics.data.revenue / branches.length) : 0, metrics.data.symbol || branding?.currencySymbol)}/d` : '—'}</strong></section>
+      <section><p>Most Earning Branch</p><strong className="branch-top-name" title="Branch with the most collected revenue today">{metrics.data?.topBranch || '—'}</strong></section>
+    </div>
+    {usage?.limit != null && usage.used >= usage.limit && <p className="branch-plan-notice">Your plan allows {usage.limit} branches. Contact us to add more.</p>}
+    <ErrorMessage error={error || list.error || plan.error || metrics.error} />
+    <section className="branches-content" aria-label="Bakery branches">
+      <div className="branches-toolbar"><div className="catalog-tabs" role="tablist" aria-label="Branch status">{['all', 'active', 'inactive'].map((tab) => <button key={tab} role="tab" aria-selected={status === tab} onClick={() => setStatus(tab)}>{tab === 'all' ? 'All' : tab === 'active' ? 'Active' : 'Inactive'}<span>{list.data ? counts[tab] : '—'}</span></button>)}</div><CatalogSearch label="Search branches" placeholder="Search branch..." value={q} onChange={setQ} /></div>
+      {list.loading && !list.data && <p role="status" className="branch-empty">Loading branches…</p>}
+      {!list.loading && !list.error && !rows.length && <div className="branch-empty"><h2>{q || status !== 'all' ? 'No branches found' : 'Your branches will appear here'}</h2><p>{q || status !== 'all' ? 'Try another search or status.' : 'Add your first bakery location to get started.'}</p></div>}
+      <div className="branches-grid">{rows.map((branch) => <article key={branch.id} className="branch-card">
+        <header><div><h2>{branch.name}</h2><p>{[branch.addressLine1, branch.addressLine2, branch.area, branch.city].filter(Boolean).join(', ')}</p></div><span className={`branch-status branch-status-${branch.status}`}>{!branch.isActive ? 'Inactive' : branch.status === 'paused' ? 'Paused' : branch.status === 'closed' ? 'Closed' : 'Active'}</span></header>
+        <BranchMetrics id={branch.id} canViewOrders={canViewOrders} stats={metrics.data} symbol={branding?.currencySymbol} />
+        <div className="branch-card-actions">{can(user, 'orders:view') && <button className="catalog-button" onClick={() => onNavigateToOrders(branch.id)}>View Orders</button>}{editable && <button className="catalog-button catalog-primary" disabled={busy} onClick={() => edit(branch)}>Manage Branch</button>}</div>
+      </article>)}</div>
+    </section>
+    <details className="catalog-tools"><summary>More branch options</summary><div className="catalog-tools-content">{usage && <p>{usage.used} of {usage.limit ?? 'unlimited'} branches used</p>}<button className="catalog-button" onClick={refresh}>Refresh</button></div></details>
+    {editor && <BranchForm key={editor.id || 'new'} branch={editor} onClose={() => setEditor(null)} onOpenHours={(branch) => { setEditor(null); setHours(branch) }} onSaved={async (branch, created) => { setEditor(null); if (created) setHours(branch); await refresh() }} />}
     {hours && <BranchHours key={hours.id} branch={hours} editable={editable} onClose={() => setHours(null)} onSaved={list.refresh} />}
   </div>
 }

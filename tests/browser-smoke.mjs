@@ -11,14 +11,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const requests = []
 const failures = []
 const designCheck = process.argv.includes('--catalog-design')
+const branchesCheck = process.argv.includes('--branches-design')
 const categories = [{ id: 'cat-1', name: 'Cakes', description: null, isActive: true, productCount: 1 }]
 const branch = { id: 'branch-1', name: 'Clifton', addressLine1: 'Shop 4', addressLine2: null, area: 'Clifton', city: 'Karachi', phone: '0211234567', isActive: true, isAcceptingOrders: true, status: 'open', acceptsDelivery: true, acceptsPickup: true, deliveryFee: 15000, minimumOrder: 0, prepTimeMinutes: 30, hours: Array.from({ length: 7 }, (_, i) => ({ day: i + 1, isClosed: false, opensAt: '09:00', closesAt: '21:00' })) }
 const branches = [branch]
+if (branchesCheck) branches.push(...['West End Branch', 'Downtown Bakery', 'West End Bakery'].map((name, i) => ({ ...branch, id: `branch-${i + 2}`, name, addressLine1: '14 Market Street' })))
 const addon = { id: 'addon-1', name: 'Toppings', minSelect: 0, maxSelect: 2, productCount: 0, isActive: true, options: [{ id: 'option-1', name: 'Sprinkles', price: 0, isAvailable: true }, { id: 'option-2', name: 'Nuts', price: 5000, isAvailable: true }] }
 const addons = [addon]
 const products = [{ id: 'product-1', name: 'Chocolate cake', description: 'Freshly baked', category: categories[0], price: 25000, priceFrom: 25000, hasSizes: false, isActive: true, sizes: [], addonSets: [], branches: [{ id: branch.id, name: branch.name, available: true }], photo: null }]
 const next = { placed: ['accepted', 'cancelled'], accepted: ['preparing', 'cancelled'], preparing: ['ready', 'cancelled'], ready: ['out_for_delivery', 'cancelled'], out_for_delivery: ['completed', 'cancelled'], completed: [], cancelled: [] }
 const order = { id: 'order-1', number: 1042, status: 'placed', fulfilment: 'delivery', paymentMethod: 'cod', paymentStatus: 'unpaid', currencySymbol: 'Rs', subtotal: 25000, deliveryFee: 15000, total: 40000, itemCount: 1, customer: { name: 'Ayesha', phone: '03001234567', email: 'customer@example.test' }, branch: { id: branch.id, name: branch.name }, area: 'Clifton', placedAt: '2026-11-23T08:00:00Z', nextStatuses: next.placed, payment: { method: 'cod', status: 'unpaid', reference: null }, address: { addressLine1: 'Home 1', city: 'Karachi', instructions: 'Ring the bell' }, notes: 'Birthday order', items: [{ id: 'line-1', productName: 'Chocolate cake', sizeName: 'Small', quantity: 1, lineTotal: 25000, note: 'No icing', addons: [{ setName: 'Toppings', optionName: 'Nuts', price: 5000 }] }], events: [{ to: 'placed', actor: { name: 'Ayesha', type: 'customer' }, at: '2026-11-23T08:00:00Z' }] }
+const branchReportOrders = branches.flatMap((location, index) => [...Array.from({ length: index + 1 }, (_, i) => ({ ...order, id: `report-${index}-${i}`, status: 'completed', paymentStatus: 'paid', total: 22145, branch: { id: location.id, name: location.name } })), ...(index === 1 ? [{ ...order, id: 'report-cancelled', status: 'cancelled', paymentStatus: 'refunded', branch: { id: location.id, name: location.name } }] : [])])
 const designOrders = ['Sarah Jenkins', 'David Miller', 'Rachel Green', 'Chandler Bing', 'Monica Geller', 'Ross Geller', 'Phoebe Buffay', 'Joey Tribbiani'].map((name, i) => ({ ...order, id: `design-${i}`, number: 2493 - i, customer: { name, phone: '+1 (555) 321-9876' }, currencySymbol: '$', status: ['preparing', 'ready', 'preparing', 'preparing', 'ready', 'out_for_delivery', 'preparing', 'ready'][i], nextStatuses: next[['preparing', 'ready', 'preparing', 'preparing', 'ready', 'out_for_delivery', 'preparing', 'ready'][i]], fulfilment: [1, 6].includes(i) ? 'pickup' : 'delivery', branch: { id: branch.id, name: 'Downtown Main Branch' }, notes: null, address: { addressLine1: '415 Sourdough Lane, Apt 3B', city: 'Austin TX' }, subtotal: 1850, deliveryFee: 250, tax: 150, total: [2250, 1298, 3412, 1450, 1275, 900, 1025, 2200][i], items: [{ id: 'line-1', quantity: 2, productName: 'Artisanal Sourdough Loaf', lineTotal: 1200 }, { id: 'line-2', quantity: 1, productName: 'Flaky Butter Croissant', lineTotal: 250 }, { id: 'line-3', quantity: 1, productName: 'Vanilla Bean Pastry Cup', lineTotal: 400 }], events: [{ to: 'placed', at: '2026-11-23T05:14Z' }, { to: 'preparing', at: '2026-11-23T05:15Z' }] }))
 if (designCheck) {
   categories.splice(0, categories.length, ...['Croissants', 'Donuts', 'Coffee', 'Bread', 'Pastries'].map((name, i) => ({ id: `cat-${i + 1}`, name, isActive: true, productCount: [5, 0, 6, 7, 4][i] })))
@@ -27,6 +30,8 @@ if (designCheck) {
 let signedIn = false
 let role = 'tenant_owner'
 let conflict = false
+let failPause = false
+let failDelete = false
 const paged = (rows) => ({ data: rows, pagination: { currentPage: 1, itemsPerPage: 10, totalPages: 1, totalItems: rows.length } })
 const backend = httpServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
@@ -49,7 +54,7 @@ const backend = httpServer(async (req, res) => {
     if (path === 'me') return send({ id: 'user-1', name: designCheck ? 'Ross Bakers' : 'Owner', role, roleName: role === 'branch_staff' ? 'Branch Staff' : designCheck ? 'Owner account' : 'Owner', permissions: role === 'branch_staff' ? ['orders:view', 'orders:manage'] : ['*'], tenant: { name: designCheck ? 'Ross Bakers Co' : 'Test Bakery' }, branch: role === 'branch_staff' ? { id: branch.id, name: branch.name } : null })
     if (role === 'branch_staff' && !path.startsWith('orders')) throw new Error(`Branch staff requested forbidden area: ${path}`)
     if (path === 'branding') return send({ currencySymbol: designCheck ? '$' : 'Rs' })
-    if (path === 'plan') return send({ usage: { branches: { used: branches.filter((item) => item.isActive).length, limit: 3 } } })
+    if (path === 'plan') return send({ usage: { branches: { used: branches.filter((item) => item.isActive).length, limit: branchesCheck ? 10 : 3 } } })
     const filtered = (rows) => rows.filter((item) => !url.searchParams.get('status') || url.searchParams.get('status') === 'all' || item.isActive === (url.searchParams.get('status') === 'active'))
     if (path === 'menu/categories') { if (req.method === 'GET') return send(filtered(categories)); const item = { id: `cat-${categories.length + 1}`, ...body, isActive: true, productCount: 0 }; categories.push(item); return send(item, 201) }
     if (path === 'menu/categories/order') return send(categories)
@@ -73,10 +78,21 @@ const backend = httpServer(async (req, res) => {
       return send(item)
     }
     if (path === 'branches') { if (req.method === 'GET') return send(filtered(branches)); const item = { ...branch, id: `branch-${branches.length + 1}`, ...body }; branches.push(item); return send(item, 201) }
-    if (path.startsWith('branches/')) { const item = branches.find((item) => item.id === path.split('/')[1]); if (path.endsWith('/hours')) { assert.equal(body.hours.length, 7); item.hours = body.hours } else if (path.endsWith('/pause')) item.isAcceptingOrders = !body.paused; else if (req.method === 'PATCH') Object.assign(item, body); else if (req.method === 'DELETE') item.isActive = false; return send(item) }
-    if (path === 'team') return send([{ id: 'rider-1', name: 'Ali' }], 200, { pagination: paged([{}]).pagination })
+    if (path.startsWith('branches/')) {
+      const item = branches.find((item) => item.id === path.split('/')[1])
+      if (path.endsWith('/pause') && failPause) { failPause = false; return send({}, 503, { message: 'Could not change order acceptance. Try again.' }) }
+      if (req.method === 'DELETE' && failDelete) { failDelete = false; return send({}, 503, { message: 'Could not delete branch. Try again.' }) }
+      if (path.endsWith('/hours')) { assert.equal(body.hours.length, 7); item.hours = body.hours }
+      else if (path.endsWith('/pause')) item.isAcceptingOrders = !body.paused
+      else if (req.method === 'PATCH') Object.assign(item, body)
+      else if (req.method === 'DELETE') item.isActive = false
+      item.status = !item.isActive ? 'inactive' : item.isAcceptingOrders ? 'open' : 'paused'
+      return send(item)
+    }
+    if (path === 'team') return send(branchesCheck ? [{ id: 'staff-1', name: 'Ali', email: 'ali@example.test' }] : [{ id: 'rider-1', name: 'Ali' }], 200, { pagination: paged([{}]).pagination })
     if (path === 'orders/summary') return send({ placed: order.status === 'placed' ? 1 : 0, accepted: 0, preparing: 0, ready: 0, out_for_delivery: 0, active: next[order.status].length ? 1 : 0, refundsNeeded: order.paymentStatus === 'refund_failed' ? 1 : 0 })
     if (path === 'orders') {
+      if (branchesCheck) { const rows = branchReportOrders.filter((row) => !url.searchParams.get('branchId') || row.branch.id === url.searchParams.get('branchId')); return send(rows, 200, { pagination: paged(rows).pagination }) }
       if (designCheck) return send(designOrders.map((item) => ({ ...item, status: url.searchParams.get('status') === 'completed' ? 'completed' : item.status })), 200, { pagination: { ...paged(designOrders).pagination, itemsPerPage: 8 } })
       const status = url.searchParams.get('status')
       const paymentStatus = url.searchParams.get('paymentStatus')
@@ -134,8 +150,18 @@ try {
   const fill = async (name, value) => { await wait(`document.querySelector('input[name=${JSON.stringify(name)}]')?.matches(':enabled')`, `input ${name}`); await evaluate(`(()=>{const e=document.querySelector('input[name=${JSON.stringify(name)}]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)}); e.dispatchEvent(new Event('input',{bubbles:true}));})()`); await sleep(20) }
   const closeModal = () => evaluate(`document.querySelector('button[aria-label="Close dialog"]').click()`)
   const awaitRequest = async (method, path) => { for (let i = 0; i < 100; i++) { const found = requests.findLast((request) => request.method === method && request.path === path); if (found) return found; await sleep(50) } throw new Error(`No request: ${method} ${path}`) }
+  const capture = async (name) => {
+    await evaluate('document.fonts.ready.then(()=>true)')
+    await wait('[...document.images].every(image => image.complete)')
+    assert.deepEqual(await evaluate('[...document.images].filter(image => image.getClientRects().length && !image.naturalWidth).map(image=>image.src)'), [], `Images must load: ${name}`)
+    const geometry = await evaluate(`Promise.all([...document.querySelectorAll('img.design-icon')].filter(image=>image.getClientRects().length).map(async image=>{const response=await fetch(image.src);const svg=new DOMParser().parseFromString(await response.text(),'image/svg+xml').documentElement;const rect=image.getBoundingClientRect();return {file:image.src.split('/').pop(),width:rect.width,height:rect.height,expectedWidth:Number(svg.getAttribute('width')),expectedHeight:Number(svg.getAttribute('height'))}}))`)
+    for (const asset of geometry) { assert.ok(Math.abs(asset.width - asset.expectedWidth) < .1, `${asset.file}: width ${asset.width}`); assert.ok(Math.abs(asset.height - asset.expectedHeight) < .1, `${asset.file}: height ${asset.height}`) }
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true, `No viewport overflow: ${name}`)
+    await writeFile(`artifacts/${name}.png`, Buffer.from((await cdp('Page.captureScreenshot', { format: 'png' })).data, 'base64'))
+  }
   const runChecks = async () => {
   await cdp('Runtime.enable')
+  await mkdir('artifacts', { recursive: true })
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   for (const path of ['/', '/app', '/?dashboard']) {
     await cdp('Page.navigate', { url: `${origin}${path}` })
@@ -181,17 +207,49 @@ try {
     console.log('Screenshots: artifacts/login-desktop.png and artifacts/login-mobile.png')
     return
   }
+  if (branchesCheck) {
+    await fill('email', 'owner@example.test'); await fill('password', 'long-test-password'); await click('Sign in'); await wait(text('Chocolate cake'))
+    await click('Add Category'); assert.equal(await evaluate(`!!document.querySelector('.category-icon-options') || document.body.innerText.includes('Category Icon')`), false); await closeModal()
+    await click('Edit Category'); await wait(`document.querySelector('[aria-label="Edit Category"]')`); assert.equal(await evaluate(`!!document.querySelector('.category-icon-options') || document.body.innerText.includes('Category Icon')`), false); await closeModal()
+    await click('Branches', 'nav button'); await wait(`document.querySelectorAll('.branch-card').length===4`); await wait(`document.querySelector('.branch-metrics strong').textContent.includes('Rs')`)
+    assert.equal(await evaluate(`document.querySelector('.branch-metrics strong').textContent`), 'Rs 221.45')
+    assert.equal(await evaluate(`document.querySelector('.branch-top-name').textContent`), 'West End Bakery')
+    assert.equal(await evaluate(`document.querySelector('.branch-performance-warning strong').textContent`), '67%')
+    await capture('branches-desktop')
+    await evaluate(`(()=>{const e=document.querySelector('[aria-label="Search branches"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'West End');e.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+    await wait(`document.querySelectorAll('.branch-card').length===2`)
+    assert.equal(await evaluate(`document.querySelector('.branch-stats strong').textContent`), '4')
+    await evaluate(`(()=>{const e=document.querySelector('[aria-label="Search branches"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'');e.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+    await click('Add Branch'); await fill('name', 'Defence'); await fill('addressLine1', '12 Shahbaz'); await fill('city', 'Karachi'); await capture('branches-add-desktop')
+    await click('Pickup Orders'); assert.equal(await evaluate(`document.querySelector('[aria-label="Delivery Orders"]').disabled`), true)
+    await click('Branch Open'); failPause = true
+    const beforeCreates = requests.filter((r) => r.method === 'POST' && r.path === 'branches').length
+    await click('Add Branch', '.dash-sheet button'); await wait(text('Could not change order acceptance.'))
+    await click('Save Changes'); await wait(text('Defence · Opening hours'))
+    assert.equal(requests.filter((r) => r.method === 'POST' && r.path === 'branches').length, beforeCreates + 1, 'Retry must not create another branch')
+    assert.deepEqual((await awaitRequest('POST', 'branches/branch-5/pause')).body, { paused: true })
+    assert.equal((await awaitRequest('POST', 'branches')).body.acceptsPickup, false)
+    assert.equal('isAcceptingOrders' in (await awaitRequest('POST', 'branches')).body, false)
+    await closeModal()
+    await click('Manage Branch'); await wait(`document.querySelector('.branch-danger-zone')`); await fill('name', 'Clifton Updated'); await capture('branches-edit-desktop')
+    await click('Delete Branch'); await capture('branches-delete-desktop'); await click('Cancel'); assert.equal(await evaluate(`document.querySelector('input[name=name]').value`), 'Clifton Updated')
+    await click('Save Changes'); await wait('!document.querySelector("[role=dialog]")'); assert.equal((await awaitRequest('PATCH', 'branches/branch-1')).body.name, 'Clifton Updated')
+    await click('Manage Branch'); await click('Delete Branch'); failDelete = true; await click('Yes, Delete'); await wait(text('Could not delete branch.'))
+    await click('Yes, Delete'); await wait('!document.querySelector("[role=dialog]")')
+    await evaluate(`document.querySelectorAll('[role=tab]')[2].click()`); await wait(`document.querySelectorAll('.branch-card').length===1`)
+    await click('Manage Branch'); await click('Branch Open'); await click('Save Changes'); await wait('!document.querySelector("[role=dialog]")')
+    assert.equal((await awaitRequest('PATCH', 'branches/branch-1')).body.isActive, true)
+    await evaluate(`document.querySelectorAll('[role=tab]')[0].click()`); await wait(`document.querySelectorAll('.branch-card').length===5`)
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await capture('branches-mobile')
+    await click('Add Branch'); await capture('branches-add-mobile'); await closeModal()
+    await click('Manage Branch'); await capture('branches-edit-mobile'); await click('Delete Branch'); await capture('branches-delete-mobile'); await click('Cancel'); await closeModal()
+    await click('View Orders'); await wait(`document.querySelector('.orders-page')`); assert.equal((await awaitRequest('GET', 'orders')).params.branchId, 'branch-1')
+    assert.deepEqual(failures, []); assert.deepEqual(browserErrors, [])
+    console.log('PASS Branches: desktop/mobile layouts and SVG geometry, category dialogs without icons, stable counts during search, creation/pause retry, fulfilment validation, edits, delete failure/retry, restoration and branch order navigation')
+    return
+  }
   if (designCheck) {
     await fill('email', 'owner@example.test'); await fill('password', 'long-test-password'); await click('Sign in'); await wait(text('Flaky Butter Croissant'))
-    const capture = async (name) => {
-      await evaluate('document.fonts.ready.then(()=>true)')
-      await wait('[...document.images].every(image => image.complete)')
-      assert.deepEqual(await evaluate('[...document.images].filter(image => image.getClientRects().length && !image.naturalWidth).map(image=>image.src)'), [], `Images must load: ${name}`)
-      const geometry = await evaluate(`Promise.all([...document.querySelectorAll('img.design-icon')].filter(image=>image.getClientRects().length).map(async image=>{const response=await fetch(image.src);const svg=new DOMParser().parseFromString(await response.text(),'image/svg+xml').documentElement;const rect=image.getBoundingClientRect();return {file:image.src.split('/').pop(),width:rect.width,height:rect.height,expectedWidth:Number(svg.getAttribute('width')),expectedHeight:Number(svg.getAttribute('height'))}}))`)
-      for (const asset of geometry) { assert.ok(Math.abs(asset.width - asset.expectedWidth) < .1, `${asset.file}: width ${asset.width}`); assert.ok(Math.abs(asset.height - asset.expectedHeight) < .1, `${asset.file}: height ${asset.height}`) }
-      assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true, `No viewport overflow: ${name}`)
-      await writeFile(`artifacts/${name}.png`, Buffer.from((await cdp('Page.captureScreenshot', { format: 'png' })).data, 'base64'))
-    }
     await capture('menu-catalog-desktop')
     assert.equal(await evaluate(`document.querySelectorAll('.menu-product').length`), 5)
     await evaluate(`document.querySelector('[aria-label="In stock: Flaky Butter Croissant"]').click()`)
@@ -257,14 +315,14 @@ try {
   await closeModal()
   console.log('PASS Menu: categories, product creation, size IDs, add-on/branch assignments, raw photo upload/removal, option prices')
 
-  await click('Branches', 'nav button'); await wait(text('Ready in about 30 min'))
-  await click('Add Branch'); await fill('name', 'Defence'); await fill('addressLine1', '12 Shahbaz'); await fill('city', 'Karachi'); await fill('deliveryFee', '200.50'); await click('Save branch'); await wait(text('Defence · Opening hours'))
+  await click('Branches', 'nav button'); await wait(`document.querySelector('.branch-card')`)
+  await click('Add Branch'); await fill('name', 'Defence'); await fill('addressLine1', '12 Shahbaz'); await fill('city', 'Karachi'); await click('Address & ordering settings', 'summary'); await fill('deliveryFee', '200.50'); await click('Add Branch', '.dash-sheet button'); await wait(text('Defence · Opening hours'))
   assert.equal((await awaitRequest('POST', 'branches')).body.deliveryFee, 20050)
   await evaluate(`document.querySelectorAll('input[type=checkbox]')[6].click()`)
   await click('Save opening hours'); await wait('!document.querySelector("[role=dialog]")')
   const hoursBody = (await awaitRequest('PUT', 'branches/branch-2/hours')).body.hours
   assert.equal(hoursBody.length, 7); assert.deepEqual(hoursBody[6], { day: 7, isClosed: true })
-  await click('Pause orders'); assert.equal((await awaitRequest('POST', 'branches/branch-1/pause')).body.paused, true)
+  await click('Manage Branch'); await click('Branch Open'); await click('Save Changes'); await wait('!document.querySelector("[role=dialog]")'); assert.equal((await awaitRequest('POST', 'branches/branch-1/pause')).body.paused, true)
   console.log('PASS Branches: creation, integer delivery fees, automatic full-week hours editor, closed-day payload, pause')
 
   await click('Orders', 'nav button'); await wait(text('#1042')); await click('View details for order #1042'); await wait(text('Ring the bell')); assert.ok(await evaluate(text('No icing'))); await evaluate(`document.querySelector('[aria-label="Close order details"]').click()`)

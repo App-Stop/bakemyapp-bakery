@@ -39,7 +39,7 @@ export function summarizeOrders(orders) {
   return { counts, revenue, perBranch: ranked.length ? Math.round(total / ranked.length * 10) / 10 : 0, topBranch: ranked[0]?.name || '—', symbol: orders[0]?.currencySymbol }
 }
 
-export async function loadOrderMetrics(params) {
+export async function loadOrderMetrics(params, summarize = summarizeOrders) {
   const orders = []
   let page = 1
   let result
@@ -48,5 +48,5 @@ export async function loadOrderMetrics(params) {
     orders.push(...result.data)
     page++
   } while (page <= (result.pagination?.totalPages || 1))
-  return summarizeOrders(orders)
+  return summarize(orders)
 }
