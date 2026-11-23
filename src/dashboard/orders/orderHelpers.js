@@ -1,0 +1,2 @@
+export const statusLabels = { placed: 'New', accepted: 'Accepted', preparing: 'Preparing', ready: 'Ready', out_for_delivery: 'En Route', completed: 'Completed', cancelled: 'Cancelled' }
+export const actionLabel = (status, order) => ({ accepted: 'Accept order', preparing: 'Start preparing', ready: 'Mark as ready', out_for_delivery: 'Dispatch', completed: order.paymentMethod === 'cod' ? (order.fulfilment === 'delivery' ? 'Delivered and paid' : 'Collected and paid') : order.fulfilment === 'delivery' ? 'Delivered' : 'Collected', cancelled: 'Cancel order' })[status] || status

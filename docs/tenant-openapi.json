@@ -1,0 +1,5934 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Bake My App Bakery API",
+    "version": "0.1.0",
+    "description": "API behind the bakery owner's panel (Tenant Admin), plus the one public call every bakery app makes\nwhen it starts. So far: sign-in and the person's own account, the bakery's activity log, the setup\nchecklist, business details, branding (colour, logo, app name, currency symbol), the plan and its\nusage, branches (with opening hours and a pause switch), and the app config. Team, menu and payments are added step by step.\n\n**Response format.** The same envelope as every other Bake My App API:\n`{ \"success\": true|false, \"message\": \"...\", \"data\": ... }`. Errors add an `error` list\n(`[{ \"path\": \"email\", \"message\": \"...\" }]`) for field problems.\n\n**Whose data?** Everything under `/v1/tenant` belongs to the bakery of the signed-in person. The\nserver takes the bakery from the person's token, never from the address or the request body, so\nthere is no bakery id to send and no way to reach another bakery.\n\n**Signing in.** It works exactly like the staff admin panel but is a separate system with its own\npeople, tokens and cookie. `POST /v1/tenant/auth/login` returns a short-lived `accessToken` (15\nminutes) in the body and sets a `bma_tenant_refresh` cookie. Send the access token on every other\ncall as `Authorization: Bearer <accessToken>`. When it expires (a 401), call\n`POST /v1/tenant/auth/refresh` once, then retry; if refresh also answers 401, show the sign-in\nscreen. The cookie is `HttpOnly`: call the API with `credentials: \"include\"` (fetch) or\n`withCredentials: true` (axios). Never run two refreshes at the same time (queue them): using an old\ncookie twice ends the session on every device.\n\n**A staff token does not work here, and a bakery token does not work on the admin API.**\n\n**Who can sign in.** Everyone with a bakery account, with a different view for each role. Owners and\nmanagers run the whole bakery. **Branch staff** run the orders of their own branch only. **Riders** see the\ndeliveries of their own branch and take them out. Branch staff and riders are limited to one branch by the\nserver (they cannot ask for another), and every other area of the panel answers them 403. `GET /v1/tenant/me`\nsays which role and branch a person has, and `permissions` says what the screens may offer.\n\n**Browsers.** Only the panel's address (the server's `TENANT_CORS_ORIGINS`) may call `/v1/tenant`\nfrom a browser. `/v1/app/config` is public and any website may call it.\n"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "This server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Sign in",
+      "description": "Start, renew and end a session; invitations and password reset"
+    },
+    {
+      "name": "My account",
+      "description": "The signed-in person's own profile and password"
+    },
+    {
+      "name": "Activity log",
+      "description": "Who changed what in this bakery"
+    },
+    {
+      "name": "Setup",
+      "description": "The checklist a new bakery works through"
+    },
+    {
+      "name": "Business",
+      "description": "The bakery's name, contact details, time zone and currency"
+    },
+    {
+      "name": "Branding",
+      "description": "The app's colour, name, currency symbol and logo"
+    },
+    {
+      "name": "Branches",
+      "description": "The bakery's shops, their delivery and pickup settings, opening hours and pause switch"
+    },
+    {
+      "name": "Deliveries",
+      "description": "The rider's screens, the ready deliveries of their branch, taking them out and handing them over"
+    },
+    {
+      "name": "Orders",
+      "description": "Orders customers placed, accepting them, moving them through the kitchen and cancelling"
+    },
+    {
+      "name": "Payments",
+      "description": "How customers pay, cash on delivery and cards through the bakery's own Stripe account"
+    },
+    {
+      "name": "Menu",
+      "description": "Categories, products with sizes and photos, add-on groups, and which branches sell what"
+    },
+    {
+      "name": "Team",
+      "description": "The bakery's people, with invitations, roles, branch, switching off and signing out"
+    },
+    {
+      "name": "Plan",
+      "description": "The bakery's own Bake My App plan and how much of it is used"
+    },
+    {
+      "name": "Files",
+      "description": "Public addresses of uploaded files such as logos"
+    },
+    {
+      "name": "App",
+      "description": "The public call the bakery's mobile app and web storefront make on start"
+    }
+  ],
+  "paths": {
+    "/v1/tenant/auth/login": {
+      "post": {
+        "tags": [
+          "Sign in"
+        ],
+        "summary": "Sign in",
+        "description": "Wrong email and wrong password give the same answer. After 5 wrong passwords the account is\nlocked for 15 minutes (429). A switched-off person, a suspended bakery, or a role with no panel\nyet all answer 403 with a message to show. At most 20 attempts per connection per 10 minutes.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "signIn": {
+                  "summary": "Sign in",
+                  "value": {
+                    "email": "owner@sweetcrumbs.example",
+                    "password": "a long passphrase 42"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in. The `bma_tenant_refresh` cookie is set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Incorrect email or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account is switched off, the bakery is suspended, or this role has no panel yet"
+          },
+          "422": {
+            "description": "Missing or malformed fields"
+          },
+          "429": {
+            "description": "Too many attempts; the account or the connection is locked for a while"
+          }
+        }
+      }
+    },
+    "/v1/tenant/auth/refresh": {
+      "post": {
+        "tags": [
+          "Sign in"
+        ],
+        "summary": "Renew the session",
+        "description": "Needs the `bma_tenant_refresh` cookie (no body). Returns a new access token and replaces the\ncookie. Using a cookie that was already used revokes the whole session (401).\n",
+        "responses": {
+          "200": {
+            "description": "A new access token; the cookie was replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session. Show the sign-in screen."
+          }
+        }
+      }
+    },
+    "/v1/tenant/auth/logout": {
+      "post": {
+        "tags": [
+          "Sign in"
+        ],
+        "summary": "Sign out",
+        "description": "Ends this session and clears the cookie. Always answers 200, even when already signed out.",
+        "responses": {
+          "200": {
+            "description": "Signed out"
+          }
+        }
+      }
+    },
+    "/v1/tenant/auth/accept-invite": {
+      "post": {
+        "tags": [
+          "Sign in"
+        ],
+        "summary": "Accept an invitation and choose a password",
+        "description": "The link in the invitation email is `<TENANT_URL>/accept-invite?token=...`. The panel reads the\ntoken from the address and posts it here. The link works once and expires after 48 hours. The\nfirst invitation of a bakery is the owner's, sent when Bake My App staff create the bakery.\nEveryone is signed in straight away, whatever their role: owners and managers, branch staff and\nriders. Open the screens that match `user.role`.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "accept": {
+                  "summary": "Accept an invitation",
+                  "value": {
+                    "token": "kP3x9f2LwQ8vN1dRzT7aYb5uXc0HeJmGsO4iVqWnA6E",
+                    "name": "Ayesha Khan",
+                    "password": "my own long passphrase 7"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Account created (and signed in, for an owner or manager)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The link is invalid, already used or expired, or the bakery is suspended"
+          },
+          "409": {
+            "description": "An account with this email already exists"
+          },
+          "422": {
+            "description": "Password too weak, or name missing"
+          }
+        }
+      }
+    },
+    "/v1/tenant/auth/forgot-password": {
+      "post": {
+        "tags": [
+          "Sign in"
+        ],
+        "summary": "Ask for a password reset link",
+        "description": "Always answers 200 with the same message, whether or not the address belongs to anyone. If it\ndoes, a link `<TENANT_URL>/reset-password?token=...` is emailed (valid 60 minutes).\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "forgot": {
+                  "summary": "Ask for a reset link",
+                  "value": {
+                    "email": "owner@sweetcrumbs.example"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request accepted"
+          }
+        }
+      }
+    },
+    "/v1/tenant/auth/reset-password": {
+      "post": {
+        "tags": [
+          "Sign in"
+        ],
+        "summary": "Choose a new password with the emailed link",
+        "description": "The link works once. All of the person's sessions on every device are ended; they sign in again.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "reset": {
+                  "summary": "Reset the password",
+                  "value": {
+                    "token": "kP3x9f2LwQ8vN1dRzT7aYb5uXc0HeJmGsO4iVqWnA6E",
+                    "password": "a fresh passphrase after reset 3"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed"
+          },
+          "400": {
+            "description": "The link is invalid, already used or expired"
+          },
+          "422": {
+            "description": "Password too weak"
+          }
+        }
+      }
+    },
+    "/v1/tenant/me": {
+      "get": {
+        "tags": [
+          "My account"
+        ],
+        "summary": "Get my profile",
+        "description": "The signed-in person, their role and permissions, and their bakery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The signed-in person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked token. Refresh once, then retry."
+          },
+          "403": {
+            "description": "The bakery is suspended, or this role has no panel"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "My account"
+        ],
+        "summary": "Change my name",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "rename": {
+                  "summary": "Change my name",
+                  "value": {
+                    "name": "Ayesha Khan"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "422": {
+            "description": "Invalid name"
+          }
+        }
+      }
+    },
+    "/v1/tenant/me/change-password": {
+      "post": {
+        "tags": [
+          "My account"
+        ],
+        "summary": "Change my password",
+        "description": "Signs the person out on every other device and returns a new session for this one (new access\ntoken, new cookie): replace the stored token with the one in the response.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "change": {
+                  "summary": "Change my password",
+                  "value": {
+                    "currentPassword": "a long passphrase 42",
+                    "newPassword": "a brand new passphrase 9"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed; a new session is returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "422": {
+            "description": "Current password wrong, or new password too weak"
+          }
+        }
+      }
+    },
+    "/v1/tenant/audit-logs": {
+      "get": {
+        "tags": [
+          "Activity log"
+        ],
+        "summary": "Activity log",
+        "description": "Needs the `audit:view` permission (the owner). Who changed what in this bakery, newest first.\n`actor.type` is `user` (someone of the bakery, named), `staff` (always shown as \"Bake My App\nteam\"; individual staff are never named) or `system` (nobody was signed in, for example a failed\nsign-in). Dates are whole days in Karachi time. Paging: `page` and `limit` (1 to 100, default 10).\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "description": "One or more action names, comma separated",
+            "schema": {
+              "type": "string",
+              "example": "auth.login_failed,team.invite_accepted"
+            }
+          },
+          {
+            "name": "entityType",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "tenant_user"
+            }
+          },
+          {
+            "name": "entityId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityLogResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Your role may not read the activity log"
+          },
+          "422": {
+            "description": "A filter is invalid"
+          }
+        }
+      }
+    },
+    "/v1/tenant/setup": {
+      "get": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Setup checklist",
+        "description": "Needs `setup:view` (owner and manager). The steps a new bakery works through, in order. Each has\n`available` (does that part of the panel exist yet?) and `done`. **Steps that are not available yet\nare still listed**, so hide them for now: the day a step is built it flips to `available: true` and the\nlist needs no change. `route` is a suggested path in your panel. `progress` counts only steps that are\navailable and required, so optional steps never hold anyone back. `complete` is true only when every\nrequired step exists and is done: while parts of the panel are still being built it stays false.\n\"Done\" for the first two steps means the owner has saved that screen at least once.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The checklist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Your role may not see it"
+          }
+        }
+      }
+    },
+    "/v1/tenant/business": {
+      "get": {
+        "tags": [
+          "Business"
+        ],
+        "summary": "Get the business details",
+        "description": "Needs `business:view` (owner and manager). `confirmed` is true once the owner has saved this screen.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see it"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Business"
+        ],
+        "summary": "Save the business details",
+        "description": "Needs `business:edit` (owner). Send only what changes; **an empty body `{}` is allowed and means\n\"these are right\"**: it marks the details as confirmed (ticks the checklist) without changing anything.\n`contactEmail` and `contactPhone` can be `null` to clear them. The address name (`slug`), `status`\nand anything else not listed is refused (422): the slug is built into the bakery's apps, so only Bake\nMy App staff can change it. Changing `name` also changes what an app without its own app name shows.\nReturns the details as GET does.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "details": {
+                  "summary": "Save the details",
+                  "value": {
+                    "name": "Sweet Crumbs Bakery",
+                    "contactEmail": "hello@sweetcrumbs.example",
+                    "contactPhone": "+92 300 1234567",
+                    "timezone": "Asia/Karachi",
+                    "currencyCode": "PKR"
+                  }
+                },
+                "confirm": {
+                  "summary": "Confirm them as they are",
+                  "value": {}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change the details"
+          },
+          "422": {
+            "description": "Invalid value (the `error` list names it), or a field that cannot be sent"
+          }
+        }
+      }
+    },
+    "/v1/tenant/branding/presets": {
+      "get": {
+        "tags": [
+          "Branding"
+        ],
+        "summary": "Colour presets",
+        "description": "Needs `branding:view`. The 18 colour presets from the mobile developer's `theme_presets.json`:\nthe 8 marked `featured` first (show those up front), then the rest. Always read them from here:\npresets can be added or recoloured without a release of your panel or of the app.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The presets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "example": "violet"
+                          },
+                          "name": {
+                            "type": "string",
+                            "example": "Violet"
+                          },
+                          "primary": {
+                            "type": "string",
+                            "example": "#903BFF"
+                          },
+                          "featured": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/branding": {
+      "get": {
+        "tags": [
+          "Branding"
+        ],
+        "summary": "Get the branding",
+        "description": "Needs `branding:view` (owner and manager). `logo` is null until one is uploaded; otherwise its\n`url` is public and can be used directly in an `img` tag. `confirmed` is true once the owner has saved\nthis screen (or uploaded a logo).\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The branding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandingResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see it"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Branding"
+        ],
+        "summary": "Save the branding",
+        "description": "Needs `branding:edit` (owner). Send only what changes; `{}` means \"these are right\" (confirms the\nscreen). What is saved is exactly what the apps read from `GET /v1/app/config` within a minute.\n\n**Colour.** Following the mobile contract, always save `preset` and `primary` together. Picking a\npreset: send its id and its colour, `{ \"preset\": \"violet\", \"primary\": \"#903BFF\" }` (the colour may be\nleft out: the server fills it in; a colour that is not the preset's is refused). A custom colour:\n`{ \"preset\": \"custom\", \"primary\": \"#C15400\" }`. `primary` is exactly `#` and 6 hex digits; it is\nstored in capitals. A colour sent without `preset` counts as custom.\n\n`appName` is what the app shows inside it (null clears it, and the business name is used); at most 80\ncharacters. `currencySymbol` is shown before every price (for example `Rs` or a dollar sign); at most 8 characters.\nAnything else is refused (422). Returns the branding as GET does.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "preset": {
+                  "summary": "Pick a preset",
+                  "value": {
+                    "preset": "violet",
+                    "primary": "#903BFF"
+                  }
+                },
+                "custom": {
+                  "summary": "Use a custom colour",
+                  "value": {
+                    "preset": "custom",
+                    "primary": "#C15400"
+                  }
+                },
+                "names": {
+                  "summary": "App name and currency symbol",
+                  "value": {
+                    "appName": "Crumbs and Co",
+                    "currencySymbol": "Rs"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandingResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change the branding"
+          },
+          "422": {
+            "description": "Invalid value (the `error` list names it)"
+          }
+        }
+      }
+    },
+    "/v1/tenant/branding/logo": {
+      "post": {
+        "tags": [
+          "Branding"
+        ],
+        "summary": "Upload the logo",
+        "description": "Needs `branding:edit` (owner). **The image is the request body itself, not a form**, with its own\ntype as the Content-Type: `fetch(url, { method: \"POST\", body: file, headers: { \"Content-Type\": file.type } })`.\nDo not wrap it in `FormData` and do not `JSON.stringify` it.\n\nAllowed: PNG, JPEG, WebP (32 to 4096 pixels on each side, 512 by 512 is ideal) and SVG (up to 200 KB),\nat most 2 MB. The server checks what the file really is from its contents, so a renamed file or a wrong\nContent-Type is refused. An SVG that contains anything that could run code or load something from\nelsewhere (scripts, event handlers, outside links, embedded web content) is refused with the reason,\nnot cleaned.\n\nA new upload replaces the old logo and gets a new address, so nothing keeps showing the old one.\nUploading counts as saving the branding. Returns the branding as GET does.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/svg+xml": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandingResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change the branding"
+          },
+          "413": {
+            "description": "The file is larger than 2 MB"
+          },
+          "415": {
+            "description": "The Content-Type is not one of the four allowed, or no image was sent as the body"
+          },
+          "422": {
+            "description": "The file is not what it says it is, is too small or too large, or is an unsafe SVG (the `error` list says why: it is safe to show)"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Branding"
+        ],
+        "summary": "Remove the logo",
+        "description": "Needs `branding:edit`. The file is deleted and its address stops working. Removing when there is no logo is fine and answers the same.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The branding, with `logo` set to null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandingResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change the branding"
+          }
+        }
+      }
+    },
+    "/v1/tenant/branches": {
+      "get": {
+        "tags": [
+          "Branches"
+        ],
+        "summary": "List branches",
+        "description": "Needs `branches:view` (owner and manager). By order (`sortOrder`), then name. Only branches that are\nswitched on unless you ask for `status=inactive` or `status=all`. Not paged: a bakery has a handful of\nbranches. Each row has a `status`: `open`, `closed` (outside its hours or a closed day), `paused` (the\nowner stopped orders; wins over the hours) or `inactive` (switched off). Open or closed is worked out in\nthe bakery's own time zone. The list leaves out the hours; the detail has them.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "active (default), inactive or all",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "all"
+              ],
+              "default": "active"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search the name, area or city",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The branches",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see branches"
+          },
+          "422": {
+            "description": "A filter is invalid"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Branches"
+        ],
+        "summary": "Add a branch",
+        "description": "Needs `branches:edit` (owner and manager). Only `name`, `addressLine1` and `city` are required. A new branch\ntakes both delivery and pickup, costs nothing to deliver, has no minimum order, needs 30 minutes to prepare,\ngoes to the end of the order, and is open 09:00 to 21:00 every day until its hours are changed.\n\n**Money is whole paisa or cents, never a fraction or a string:** a delivery fee of 150.00 is `15000`.\n\nRefused with a 422 whose `error` path is `plan` when the bakery already has as many branches switched on as\nits plan allows (Startup 1, Growth 3, Business Suite no limit): show that message. Two active branches of one\nbakery cannot share a name (not case sensitive): 422 on `name`. A branch must offer delivery, pickup or both\n(422 on `acceptsDelivery`). The bakery, the on/off state and the hours cannot be sent here.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "minimal": {
+                  "summary": "Just the required fields",
+                  "value": {
+                    "name": "Clifton",
+                    "addressLine1": "Shop 4, Block 5",
+                    "city": "Karachi"
+                  }
+                },
+                "full": {
+                  "summary": "With delivery and pickup settings",
+                  "value": {
+                    "name": "Defence",
+                    "addressLine1": "12 Khayaban-e-Shahbaz",
+                    "addressLine2": "Phase 6",
+                    "area": "DHA",
+                    "city": "Karachi",
+                    "phone": "+92 21 3500 0000",
+                    "acceptsDelivery": true,
+                    "acceptsPickup": true,
+                    "deliveryFee": 15000,
+                    "minimumOrder": 100000,
+                    "prepTimeMinutes": 45
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new branch, with its hours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not add branches"
+          },
+          "422": {
+            "description": "Invalid field, name already used, or the plan's branch limit is reached (the `error` list says which)"
+          }
+        }
+      }
+    },
+    "/v1/tenant/branches/{branchId}": {
+      "parameters": [
+        {
+          "name": "branchId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Branches"
+        ],
+        "summary": "Get one branch",
+        "description": "Needs `branches:view`. The list row plus `hours` (seven days, Monday first). A branch of another bakery is a 404, like any unknown id.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The branch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such branch in this bakery"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Branches"
+        ],
+        "summary": "Change a branch",
+        "description": "Needs `branches:edit`. Send only what changes (at least one field). `phone`, `area` and `addressLine2` can be\n`null` to clear them. Sending what is already set changes nothing and is not logged.\n`isActive: false` switches the branch off (the same as DELETE); `isActive: true` switches it back on and is\nrefused (422 on `plan`) when the plan's branch limit is full, or on `name` when another active branch has taken\nits name. Pausing is not done here: use the pause call. Returns the branch with its hours.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "delivery": {
+                  "summary": "Change the delivery settings",
+                  "value": {
+                    "deliveryFee": 20000,
+                    "minimumOrder": 100000,
+                    "prepTimeMinutes": 60
+                  }
+                },
+                "pickupOnly": {
+                  "summary": "Pickup only",
+                  "value": {
+                    "acceptsDelivery": false,
+                    "acceptsPickup": true
+                  }
+                },
+                "switchOn": {
+                  "summary": "Switch a branch back on",
+                  "value": {
+                    "isActive": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated branch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change branches"
+          },
+          "404": {
+            "description": "No such branch in this bakery"
+          },
+          "422": {
+            "description": "Invalid field, name already used, no way to order left, or the plan's branch limit is reached"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Branches"
+        ],
+        "summary": "Switch a branch off",
+        "description": "Needs `branches:edit`. \"Deleting\" only switches the branch off: it keeps its history, disappears from the\ndefault list (see `status=inactive`) and stops counting against the plan, which frees room for another.\nDoing it again changes nothing. It can be switched back on with PATCH.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The branch, now inactive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change branches"
+          },
+          "404": {
+            "description": "No such branch in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/branches/{branchId}/hours": {
+      "parameters": [
+        {
+          "name": "branchId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "Branches"
+        ],
+        "summary": "Set the weekly opening hours",
+        "description": "Needs `branches:edit`. **Replaces the whole week**: send all seven days (1 is Monday, 7 is Sunday), in any\norder, each once. An open day needs `opensAt` and `closesAt` as `HH:MM` (00:00 to 23:59) with the closing time\nafter the opening time on the same day: to stay open until midnight use `23:59`. A closed day is\n`{ \"day\": 7, \"isClosed\": true }` with no times. Field errors name the day, for example `hours.2.closesAt` is\nthe third entry in what you sent. Only days that really changed are logged. Returns the branch with its hours.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "week": {
+                  "summary": "A week with a late Friday and a closed Sunday",
+                  "value": {
+                    "hours": [
+                      {
+                        "day": 1,
+                        "isClosed": false,
+                        "opensAt": "08:00",
+                        "closesAt": "21:00"
+                      },
+                      {
+                        "day": 2,
+                        "isClosed": false,
+                        "opensAt": "09:00",
+                        "closesAt": "21:00"
+                      },
+                      {
+                        "day": 3,
+                        "isClosed": false,
+                        "opensAt": "09:00",
+                        "closesAt": "21:00"
+                      },
+                      {
+                        "day": 4,
+                        "isClosed": false,
+                        "opensAt": "09:00",
+                        "closesAt": "21:00"
+                      },
+                      {
+                        "day": 5,
+                        "isClosed": false,
+                        "opensAt": "09:00",
+                        "closesAt": "23:59"
+                      },
+                      {
+                        "day": 6,
+                        "isClosed": false,
+                        "opensAt": "09:00",
+                        "closesAt": "21:00"
+                      },
+                      {
+                        "day": 7,
+                        "isClosed": true
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The branch with its new hours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change branches"
+          },
+          "404": {
+            "description": "No such branch in this bakery"
+          },
+          "422": {
+            "description": "Not seven different days, a bad time, or a closing time that is not after the opening time"
+          }
+        }
+      }
+    },
+    "/v1/tenant/branches/{branchId}/pause": {
+      "parameters": [
+        {
+          "name": "branchId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Branches"
+        ],
+        "summary": "Pause or restart orders",
+        "description": "Needs `branches:edit`. The pause switch: `{ \"paused\": true }` stops the branch taking orders (a rush, a\npower cut) whatever its hours say, `{ \"paused\": false }` restarts it. Doing what is already done changes\nnothing. A switched-off branch cannot be paused (422 on `branch`). Returns the branch.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "pause": {
+                  "summary": "Stop taking orders",
+                  "value": {
+                    "paused": true
+                  }
+                },
+                "resume": {
+                  "summary": "Start taking orders again",
+                  "value": {
+                    "paused": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The branch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change branches"
+          },
+          "404": {
+            "description": "No such branch in this bakery"
+          },
+          "422": {
+            "description": "The body does not say paused true or paused false, or the branch is switched off"
+          }
+        }
+      }
+    },
+    "/v1/tenant/deliveries": {
+      "get": {
+        "tags": [
+          "Deliveries"
+        ],
+        "summary": "List deliveries",
+        "description": "For **riders only** (owners, managers and branch staff get 403: they use the orders screens). Needs\n`deliveries:manage`. A rider sees only the delivery orders of **their own branch**, never pickup orders and never\nanother branch's. `view` chooses the list:\n\n- `available` (default): deliveries that are `ready` and that nobody has taken, oldest first. This is the rider's\n  job board.\n- `mine`: deliveries this rider has taken and not yet handed over, oldest first.\n- `done`: deliveries this rider has completed, newest first.\n\nEach row has everything needed on the road: the customer's name and phone, the address with the note for the\nrider, and **`amountDue`**: the cash to collect at the door (the whole total for an unpaid cash order, 0\notherwise). The customer's email is never shown to riders. Paging: `page` and `limit` (1 to 100, default 10).\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "available",
+                "mine",
+                "done"
+              ],
+              "default": "available"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of deliveries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only riders use deliveries, or the rider is not assigned to a branch"
+          },
+          "422": {
+            "description": "A filter is invalid"
+          }
+        }
+      }
+    },
+    "/v1/tenant/deliveries/summary": {
+      "get": {
+        "tags": [
+          "Deliveries"
+        ],
+        "summary": "Deliveries waiting",
+        "description": "For riders only. `available` is how many ready deliveries nobody has taken at the rider's branch, and `mine` how many the rider is carrying now. Use them for badges, and refresh every 15 to 30 seconds.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliverySummaryResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only riders use deliveries"
+          }
+        }
+      }
+    },
+    "/v1/tenant/deliveries/{deliveryId}": {
+      "parameters": [
+        {
+          "name": "deliveryId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Deliveries"
+        ],
+        "summary": "One delivery",
+        "description": "For riders only. The delivery with its items (names, sizes, quantities, extras and notes) so the rider knows what is in the bag. Only deliveries that are up for grabs at the rider's branch, or that this rider is carrying or has completed, can be opened. Anything else is a 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such delivery for this rider"
+          }
+        }
+      }
+    },
+    "/v1/tenant/deliveries/{deliveryId}/pickup": {
+      "parameters": [
+        {
+          "name": "deliveryId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Deliveries"
+        ],
+        "summary": "Take a delivery out",
+        "description": "For riders only. The rider takes a `ready` delivery: it becomes `out_for_delivery` with the rider's name on it,\nand the customer is emailed that it is on its way and with whom. **Only one rider can take a delivery.** If two\npress at the same moment, one gets 200 and the other gets 404 or 409: show \"Someone else took this delivery\" and\nrefresh the list. Taking a delivery you already carry is harmless and answers 200.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The delivery, now out with the rider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not a delivery this rider can take"
+          },
+          "409": {
+            "description": "Someone else took it, or it is not ready"
+          }
+        }
+      }
+    },
+    "/v1/tenant/deliveries/{deliveryId}/delivered": {
+      "parameters": [
+        {
+          "name": "deliveryId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Deliveries"
+        ],
+        "summary": "Hand the order over",
+        "description": "For riders only. The rider hands the order to the customer. The order becomes `completed`, and a cash order is marked `paid` because the rider collected the money. Only the rider carrying it can do this. Doing it twice answers 200.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The completed delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not this rider's delivery"
+          },
+          "409": {
+            "description": "The delivery is not out with this rider"
+          }
+        }
+      }
+    },
+    "/v1/tenant/deliveries/{deliveryId}/release": {
+      "parameters": [
+        {
+          "name": "deliveryId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Deliveries"
+        ],
+        "summary": "Hand a delivery back",
+        "description": "For riders only. The rider cannot deliver after all (a breakdown, a wrong address). The order goes back to\n`ready` and is up for grabs again, with the rider's `reason` (3 to 200 characters, required) in the order's story\nso the bakery can see what happened. The customer is not emailed. Only the rider carrying it can do this.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "release": {
+                  "summary": "Hand it back",
+                  "value": {
+                    "reason": "My bike broke down"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The delivery, ready again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not this rider's delivery"
+          },
+          "409": {
+            "description": "The delivery is not out with this rider"
+          },
+          "422": {
+            "description": "A reason is missing"
+          }
+        }
+      }
+    },
+    "/v1/tenant/orders": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "List orders",
+        "description": "Needs `orders:view` (owner, manager and branch staff). Branch staff only ever see the orders of their own branch\n(they cannot ask for another: `branchId` is ignored for them, and another branch's order is a 404). The orders customers placed at this bakery, newest first, as summaries\nfor the board (no lines: open one for those). Filters: `status` (one or more, comma separated, from `placed`,\n`accepted`, `preparing`, `ready`, `out_for_delivery`, `completed`, `cancelled`, or the words `active` for\neverything not finished and `past` for completed and cancelled), `branchId`, `fulfilment` (`delivery` or\n`pickup`), `paymentMethod` (`cod` or `card`), `q` (an order number, or part of the customer's name or phone),\n`from` and `to` (`YYYY-MM-DD`, Karachi days, by when it was placed) and `sort` (`newest` default, or `oldest`\nwhich suits a kitchen queue). Paging: `page` and `limit` (1 to 100, default 10).\n\nA card order only appears once the customer has really paid: orders waiting for payment, or closed unpaid, are never listed. Each row has `nextStatuses`: where the order can go from here. Show buttons only for those.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "One or more statuses, comma separated, or active or past",
+            "schema": {
+              "type": "string",
+              "example": "placed,accepted"
+            }
+          },
+          {
+            "name": "branchId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "fulfilment",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "delivery",
+                "pickup"
+              ]
+            }
+          },
+          {
+            "name": "paymentMethod",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cod",
+                "card"
+              ]
+            }
+          },
+          {
+            "name": "paymentStatus",
+            "in": "query",
+            "description": "Use refund_failed to find cancelled card orders the owner must refund by hand",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unpaid",
+                "pending",
+                "paid",
+                "refunded",
+                "refund_failed"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Order number, or part of the customer name or phone",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest"
+              ],
+              "default": "newest"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see orders"
+          },
+          "422": {
+            "description": "A filter is invalid"
+          }
+        }
+      }
+    },
+    "/v1/tenant/orders/summary": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Orders waiting, by stage",
+        "description": "Needs `orders:view`. How many orders are at each unfinished stage right now (`placed`, `accepted`, `preparing`,\n`ready`, `out_for_delivery`) and the total as `active`. Use it for the badges on the board and the menu, and\nrefresh it every 15 to 30 seconds. `branchId` limits it to one branch. `placed` is the number of orders nobody\nhas accepted yet: that is the one to make noticeable.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "branchId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderSummaryResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see orders"
+          },
+          "422": {
+            "description": "Not a valid branch id"
+          }
+        }
+      }
+    },
+    "/v1/tenant/orders/{orderId}": {
+      "parameters": [
+        {
+          "name": "orderId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Get one order",
+        "description": "Needs `orders:view`. The summary plus everything needed to prepare and hand over the order: the customer's name,\nphone and email, the delivery address with the rider's note, the customer's order note, every line with its size,\nextras and note, and `events`, the order's story (who moved it, when, and the reason for a cancellation). An order\nof another bakery is a 404, like any unknown id.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDetailResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see orders"
+          },
+          "404": {
+            "description": "No such order in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/orders/{orderId}/status": {
+      "parameters": [
+        {
+          "name": "orderId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Move an order along, or cancel it",
+        "description": "Needs `orders:manage` (owner and manager). Send the `status` to move to. The path is\n`placed` to `accepted` to `preparing` to `ready`, then for **delivery** `out_for_delivery` and `completed`, or\nfor **pickup** straight to `completed`. An order can be cancelled from any stage before it is finished. Skipping\na stage, going back, or changing a finished order is a 422 on `status`: use `nextStatuses` from the order.\n\n- **Cancelling needs a `reason`** (3 to 200 characters). The customer is shown it and emailed it. A reason is\n  refused for any other status.\n- When **sending a delivery out**, `riderId` can name the rider taking it (one of the branch's active riders:\n  422 on `riderId` otherwise). The customer is emailed who is bringing it. Riders can also take a ready\n  delivery themselves from their own screens.\n- When **accepting**, `readyInMinutes` (1 to 720) sets how long until it is ready, if that differs from the\n  branch's usual preparation time. It is refused for other statuses.\n- Completing a **cash on delivery** order marks it `paid`: the cash has been collected.\n- Asking for the status the order already has changes nothing and answers 200, so a retry is harmless.\n- The change is made only if the order is still where you saw it. If a colleague or the customer changed it a\n  moment ago the answer is **409** (or a 422 on `status` when it can no longer go there): refresh the order and\n  show what happened.\n\nThe customer is emailed when the order is accepted, ready for pickup, out for delivery and cancelled. A\ncustomer can only cancel their own order while it is still `placed`.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "accept": {
+                  "summary": "Accept, ready in 25 minutes",
+                  "value": {
+                    "status": "accepted",
+                    "readyInMinutes": 25
+                  }
+                },
+                "next": {
+                  "summary": "Start preparing",
+                  "value": {
+                    "status": "preparing"
+                  }
+                },
+                "cancel": {
+                  "summary": "Cancel with a reason",
+                  "value": {
+                    "status": "cancelled",
+                    "reason": "We ran out of cocoa today, sorry"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The order after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDetailResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change orders"
+          },
+          "404": {
+            "description": "No such order in this bakery"
+          },
+          "409": {
+            "description": "Someone else changed the order a moment ago"
+          },
+          "422": {
+            "description": "The order cannot go to that status, a reason is missing or not allowed, or an invalid field"
+          }
+        }
+      }
+    },
+    "/v1/tenant/payments": {
+      "get": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Get the payment settings",
+        "description": "Needs `payments:manage` (**owner only**: hide the screen from managers). How customers can pay this bakery.\nCash on delivery (`cod`) and cards (`card`, through the bakery's **own** Stripe account: the money never\npasses through Bake My App). `card.configured` says keys are saved; `card.ready` says the saved key passed its\nlast test with Stripe, which is needed before cards can be switched on. `usable` is true when customers have at\nleast one way to pay. **The secret key is never returned**, only `card.secretKeyHint` such as `sk_test_����1234`.\nA new bakery has nothing switched on.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only the owner may see payment settings"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Choose how customers pay",
+        "description": "Needs `payments:manage`. Send only what changes: `codEnabled`, `codNote` (a line shown to customers, `null`\nclears it) and `cardEnabled`. Switching cards on is refused (422 on `cardEnabled`) until a Stripe key has been\nsaved and passed its test. Switching both off is refused (422 on `codEnabled`): keep at least one way to pay.\nSaving counts as confirming the choice, which ticks the setup checklist (an empty body confirms what is\nalready chosen, if something is). Sending what is already set changes nothing and is not logged.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "cash": {
+                  "summary": "Cash on delivery",
+                  "value": {
+                    "codEnabled": true,
+                    "codNote": "Please have exact change ready"
+                  }
+                },
+                "cards": {
+                  "summary": "Switch cards on",
+                  "value": {
+                    "cardEnabled": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only the owner may change payment settings"
+          },
+          "422": {
+            "description": "Invalid field, cards without working keys, or nothing left switched on"
+          }
+        }
+      }
+    },
+    "/v1/tenant/payments/stripe-keys": {
+      "put": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Save the Stripe keys",
+        "description": "Needs `payments:manage`. The owner pastes the two keys from their own Stripe dashboard\n(Developers, API keys). The **secret key is checked with Stripe first** and only saved if Stripe accepts it;\nit is then stored locked and **never shown again** (not in any answer, log or activity entry). Both keys\nmust be for the same mode: `pk_test_` with `sk_test_`, or `pk_live_` with `sk_live_`. The answer's `card.mode`\nsays which. Saved keys replace the old ones. Cards stay off until switched on with PATCH.\nErrors: 422 on `secretKey` (not shaped like a Stripe secret key, or Stripe did not accept it) or\n`publishableKey`; 503 when Stripe cannot be reached (try again) or when the server has no key to lock\nsecrets with (contact Bake My App). Never put the secret key in a URL or keep it in the panel after saving.\nLimited to 20 tries per 10 minutes.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "keys": {
+                  "summary": "A pair of test keys",
+                  "value": {
+                    "publishableKey": "YOUR_STRIPE_PUBLISHABLE_KEY",
+                    "secretKey": "YOUR_STRIPE_SECRET_KEY"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved. The settings, with a hint of the key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only the owner may save payment keys"
+          },
+          "422": {
+            "description": "Keys are malformed, do not match, or Stripe did not accept the secret key"
+          },
+          "429": {
+            "description": "Too many tries"
+          },
+          "503": {
+            "description": "Stripe could not be reached, or card payments cannot be saved on this server"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Remove the Stripe keys",
+        "description": "Needs `payments:manage`. Forgets both keys and switches cards off. Cash on delivery is not touched.\nRefused (422 on `codEnabled`) while cards are on and cash is off, so customers are never left with no way to\npay. Removing keys that are not there is fine.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The settings, with no keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only the owner may remove payment keys"
+          },
+          "422": {
+            "description": "Cards are the only way to pay right now"
+          }
+        }
+      }
+    },
+    "/v1/tenant/payments/stripe-keys/test": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Test the saved key",
+        "description": "Needs `payments:manage`. Asks Stripe again whether the saved secret key still works. A 200 is returned either\nway: `ok: true` means Stripe accepted it; `ok: false` means Stripe no longer does (the owner rolled or deleted\nthe key), and then **cards are switched off at once** so customers are never offered a payment that cannot\ngo through. The owner must save a working key and switch cards on again. A 422 means no keys are saved yet; a\n503 means Stripe could not be reached and nothing was changed. Limited to 20 tries per 10 minutes.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The result of the test, with the settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsTestResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only the owner may test payment keys"
+          },
+          "422": {
+            "description": "No keys are saved"
+          },
+          "429": {
+            "description": "Too many tries"
+          },
+          "503": {
+            "description": "Stripe could not be reached"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/categories": {
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "List categories",
+        "description": "Needs `menu:view` (owner and manager). The sections of the menu in their order, each with\n`productCount` (products that are switched on). Only categories that are switched on unless you ask for\n`status=inactive` or `status=all`. Not paged.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "all"
+              ],
+              "default": "active"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The categories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuCategoryListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A filter is invalid"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Add a category",
+        "description": "Needs `menu:edit` (owner and manager). Goes to the end of the order. Two categories that are switched on\ncannot share a name (not case sensitive): 422 on `name`. The bakery cannot be sent.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "cakes": {
+                  "summary": "A category",
+                  "value": {
+                    "name": "Cakes",
+                    "description": "Whole cakes and slices"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new category",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuCategoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid field or the name is taken"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/categories/order": {
+      "put": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Put the categories in order",
+        "description": "Needs `menu:edit`. Send the category ids in the order they should appear. Ones you leave out follow\nafter, in their old order. Any id that is not one of this bakery's categories, a repeat, or an empty list\nis a 422. Returns the categories that are switched on.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "order": {
+                  "summary": "Cakes first",
+                  "value": {
+                    "ids": [
+                      "6f1c3a52-0000-4000-8000-000000000000"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The categories in their new order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuCategoryListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not a list of this bakery's categories"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/categories/{categoryId}": {
+      "parameters": [
+        {
+          "name": "categoryId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Get one category",
+        "description": "Needs `menu:view`. A category of another bakery is a 404, like any unknown id.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The category",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuCategoryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such category in this bakery"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Change a category",
+        "description": "Needs `menu:edit`. Send only what changes (at least one field). `description` can be `null` to clear it.\nSending what is already set changes nothing and is not logged. `isActive: false` switches the category off\n(the same as DELETE); `true` brings it back, and is refused (422 on `isActive`) when another category\nhas taken its name meanwhile.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "rename": {
+                  "summary": "Rename",
+                  "value": {
+                    "name": "Birthday cakes"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated category",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuCategoryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such category in this bakery"
+          },
+          "422": {
+            "description": "Invalid field or the name is taken"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Switch a category off",
+        "description": "Needs `menu:edit`. \"Deleting\" only switches it off, so its products are kept and it can be switched on again with PATCH. Customers will not see its products. Doing it again changes nothing.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The category, now inactive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuCategoryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such category in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/addon-sets": {
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "List add-on groups",
+        "description": "Needs `menu:view`. Groups of extras such as \"Toppings\", each with its options and `productCount`\n(how many products offer it). Only groups that are switched on unless you ask for `status=inactive` or\n`status=all`.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "all"
+              ],
+              "default": "active"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The add-on groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuAddonSetListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Add an add-on group",
+        "description": "Needs `menu:edit`. `minSelect` is how many the customer must pick (0 means optional) and `maxSelect` how\nmany at most (`null` means any number). A group cannot ask for more picks than it has options (422 on\n`minSelect`), and the most cannot be below the fewest (422 on `maxSelect`). **Option prices are whole paisa\nor cents** and are charged on top of the product: free extras are `0`. Option names are unique within the\ngroup. Group names are unique among those switched on (422 on `name`).\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "toppings": {
+                  "summary": "Pick up to two toppings",
+                  "value": {
+                    "name": "Toppings",
+                    "minSelect": 0,
+                    "maxSelect": 2,
+                    "options": [
+                      {
+                        "name": "Sprinkles",
+                        "price": 0
+                      },
+                      {
+                        "name": "Roasted nuts",
+                        "price": 5000
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuAddonSetResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid field, name taken, or the pick limits do not fit the options"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/addon-sets/{addonSetId}": {
+      "parameters": [
+        {
+          "name": "addonSetId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Get one add-on group",
+        "description": "Needs `menu:view`. A group of another bakery is a 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The group with its options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuAddonSetResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such group in this bakery"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Change an add-on group",
+        "description": "Needs `menu:edit`. Send only what changes: `name`, `minSelect`, `maxSelect` (`null` for no limit) or\n`isActive`. Options are changed with their own call. Same pick rules as when adding. A group that is off\ncannot be given to a product, and switching it back on is refused when another group took its name.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "rename": {
+                  "summary": "Rename",
+                  "value": {
+                    "name": "Extras"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuAddonSetResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such group in this bakery"
+          },
+          "422": {
+            "description": "Invalid field, name taken, or the pick limits do not fit"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Switch an add-on group off",
+        "description": "Needs `menu:edit`. Only switches it off; it can be switched on again with PATCH.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The group, now inactive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuAddonSetResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such group in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/addon-sets/{addonSetId}/options": {
+      "parameters": [
+        {
+          "name": "addonSetId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Set the options of a group",
+        "description": "Needs `menu:edit`. Replaces the whole list, in the order sent. An option sent with its `id` is kept and\nedited; one without an `id` is new; any existing option not sent is removed. `isAvailable: false` marks an\noption sold out without removing it. Names must be different within the group, an `id` must belong to this\ngroup, and a group cannot be left with fewer options than customers must pick. At most 50 options.\nSending exactly what is already there changes nothing and is not logged.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "options": {
+                  "summary": "Edit one, add one",
+                  "value": {
+                    "options": [
+                      {
+                        "id": "6f1c3a52-0000-4000-8000-000000000000",
+                        "name": "Roasted nuts",
+                        "price": 6000,
+                        "isAvailable": false
+                      },
+                      {
+                        "name": "Cherries",
+                        "price": 8000
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The group with its new options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuAddonSetResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such group in this bakery"
+          },
+          "422": {
+            "description": "Invalid option, repeated name, or an id that is not in this group"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/products": {
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "List products",
+        "description": "Needs `menu:view`. In menu order: by category, then product. Filters: `q` (name), `categoryId`, `status`\n(`active` default, `inactive` or `all`) and `branchId` (only what that branch sells). Paging: `page` and\n`limit` (1 to 100, default 10). `price` is the single price or `null` when sizes carry the prices;\n`priceFrom` is what to show as \"from\" (the price, or the lowest size). All money is in paisa or cents.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "branchId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "all"
+              ],
+              "default": "active"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of products",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A filter is invalid"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Add a product",
+        "description": "Needs `menu:edit`. Needs `categoryId` (one of your categories that is switched on) and `name`, and\n**either `price` or `sizes`, not both**: a product with sizes has a price on each size. **Money is whole\npaisa or cents, never a fraction or a string**: 2,500.00 is `250000`, and a price must be at least 1. At\nmost 10 sizes with different names. A product name is used once per category among those switched on\n(422 on `name`). The photo, add-on groups and branches are set with their own calls. Returns the full\nproduct.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "simple": {
+                  "summary": "One price",
+                  "value": {
+                    "categoryId": "6f1c3a52-0000-4000-8000-000000000000",
+                    "name": "Chocolate cake",
+                    "description": "Rich and dark",
+                    "price": 250000
+                  }
+                },
+                "sizes": {
+                  "summary": "Sizes with their own prices",
+                  "value": {
+                    "categoryId": "6f1c3a52-0000-4000-8000-000000000000",
+                    "name": "Pizza",
+                    "sizes": [
+                      {
+                        "name": "Small",
+                        "price": 90000
+                      },
+                      {
+                        "name": "Large",
+                        "price": 180000
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid field, price rules broken, category not usable, or the name is taken"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/products/order": {
+      "put": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Put a category's products in order",
+        "description": "Needs `menu:edit`. Send the `categoryId` and the product ids of that category in the order they should\nappear. Ones left out follow after. An id from another category or bakery, a repeat, or an empty list is a\n422. Returns the category's products that are switched on.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "order": {
+                  "summary": "Two products first",
+                  "value": {
+                    "categoryId": "6f1c3a52-0000-4000-8000-000000000000",
+                    "ids": [
+                      "6f1c3a52-0000-4000-8000-000000000001",
+                      "6f1c3a52-0000-4000-8000-000000000002"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The products in their new order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not products of this category"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/products/{productId}": {
+      "parameters": [
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Get one product",
+        "description": "Needs `menu:view`. The list row plus `sizes`, `addonSets` (with their options) and `branches` (every branch that is switched on, and whether it sells this product). A product of another bakery is a 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Change a product",
+        "description": "Needs `menu:edit`. Send only what changes (at least one field): `name`, `description` (`null` clears it),\n`categoryId` (moves it to the end of that category), `price` or `isActive`. A product that has sizes takes\nno `price` here (422): change its sizes instead. Sending what is already set changes nothing and is not\nlogged. `isActive: false` switches the product off (the same as DELETE); `true` brings it back, refused\nwhile its category is off or when the name is taken in the category.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "price": {
+                  "summary": "New price",
+                  "value": {
+                    "price": 275000
+                  }
+                },
+                "move": {
+                  "summary": "Move to another category",
+                  "value": {
+                    "categoryId": "6f1c3a52-0000-4000-8000-000000000000"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          },
+          "422": {
+            "description": "Invalid field, name taken, or not allowed for this product"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Switch a product off",
+        "description": "Needs `menu:edit`. Only switches it off, so it keeps its history and customers stop seeing it. It can be switched on again with PATCH.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The product, now inactive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/products/{productId}/sizes": {
+      "parameters": [
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Set the sizes of a product",
+        "description": "Needs `menu:edit`. Replaces the whole list, in the order sent. A size sent with its `id` is kept (and\nedited), one without is new, and any not sent is removed. With sizes the product's own price is cleared;\n**to go back to no sizes send `sizes: []` and a `price`**. Sending sizes together with a `price`, or an\nempty list without one, is a 422. At most 10 sizes, different names, prices at least 1.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "sizes": {
+                  "summary": "Two sizes",
+                  "value": {
+                    "sizes": [
+                      {
+                        "name": "1 lb",
+                        "price": 250000
+                      },
+                      {
+                        "name": "2 lb",
+                        "price": 450000
+                      }
+                    ]
+                  }
+                },
+                "none": {
+                  "summary": "Back to a single price",
+                  "value": {
+                    "sizes": [],
+                    "price": 275000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          },
+          "422": {
+            "description": "Invalid sizes or price rules broken"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/products/{productId}/addon-sets": {
+      "parameters": [
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Choose the add-on groups of a product",
+        "description": "Needs `menu:edit`. The groups this product offers, in the order sent (up to 10, each once). Every id must\nbe one of your add-on groups that is switched on (422 on `addonSetIds`). Send `[]` to offer none.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "groups": {
+                  "summary": "Two groups",
+                  "value": {
+                    "addonSetIds": [
+                      "6f1c3a52-0000-4000-8000-000000000000"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          },
+          "422": {
+            "description": "Not add-on groups of this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/products/{productId}/branches": {
+      "parameters": [
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "put": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Say which branches do not sell a product",
+        "description": "Needs `menu:edit`. Every branch sells every product unless named here, so a new branch sells everything\nand the list of exceptions stays short. Send the branch ids that do **not** sell it (`[]` for none). Every\nid must be one of your branches (422 on `unavailableBranchIds`). The product's `branches` list shows the\nresult for each branch that is switched on.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "exceptions": {
+                  "summary": "Not at one branch",
+                  "value": {
+                    "unavailableBranchIds": [
+                      "6f1c3a52-0000-4000-8000-000000000000"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          },
+          "422": {
+            "description": "Not branches of this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/menu/products/{productId}/photo": {
+      "parameters": [
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Upload the photo",
+        "description": "Needs `menu:edit`. **The picture is the request body itself, not a form**, with its own type as the\nContent-Type: `fetch(url, { method: \"POST\", body: file, headers: { \"Content-Type\": file.type } })`.\nAllowed: PNG, JPEG or WebP, 200 to 4096 pixels on each side, at most 5 MB. SVG is not allowed for photos.\nThe server checks what the file really is, so a renamed file or a wrong Content-Type is refused.\nA new upload replaces the old photo and gets a new address. The photo's `url` is public and cacheable.\nReturns the product.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          },
+          "413": {
+            "description": "The file is larger than 5 MB"
+          },
+          "415": {
+            "description": "Not sent as the request body with an image Content-Type"
+          },
+          "422": {
+            "description": "Not a real picture, or the wrong size"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Menu"
+        ],
+        "summary": "Remove the photo",
+        "description": "Needs `menu:edit`. Removing a photo that is not there is fine.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The product, with no photo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuProductResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such product in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/team": {
+      "get": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "List the team",
+        "description": "Needs `team:view` (owner and manager). The people of this bakery, by name. Filters: `q` (name or email),\n`role`, `branchId`, `status` (`active` or `inactive`). Paging: `page` and `limit` (1 to 100, default 10).\n`canSignIn` is true for every built-in role: branch staff and riders have their own screens. `isLocked` is true while too many wrong passwords keep someone out.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search the name or email",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "branch_staff"
+            }
+          },
+          {
+            "name": "branchId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of people",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see the team"
+          },
+          "422": {
+            "description": "A filter is invalid"
+          }
+        }
+      }
+    },
+    "/v1/tenant/team/roles": {
+      "get": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "The roles",
+        "description": "Needs `team:view`. The four bakery roles with what each may do, whether it needs a branch\n(`requiresBranch`) and whether the signed-in person may give it out (`assignable`: managers cannot\ngive out the owner role). Use it to fill the role picker.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The roles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamRolesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/team/invites": {
+      "get": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "Pending invitations",
+        "description": "Needs `team:view`. Invitations nobody has accepted yet, newest first. Expired ones are listed with\n`expired: true` so they can be sent again. `invitedBy.type` is `user` (named) or `staff`\n(always shown as \"Bake My App team\").\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The invitations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamInvitesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "Invite someone",
+        "description": "Needs `team:manage` (owner and manager). Emails a one-time link to choose a password. Branch staff and\nriders need a `branchId` (one of your branches that is switched on); owners and managers must not have\none. Only an owner can invite an owner. Inviting an address again replaces the earlier link.\nAn address already on your team is refused with a 422 on `email`. An address that belongs to someone at\nanother bakery gets a general \"cannot be used\" message that does not say why. If the email cannot be\nsent the invitation is not kept and you get a 503: try again.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "manager": {
+                  "summary": "A manager",
+                  "value": {
+                    "email": "manager@sweetcrumbs.example",
+                    "name": "Mina Manager",
+                    "role": "tenant_manager"
+                  }
+                },
+                "baker": {
+                  "summary": "Branch staff at one branch",
+                  "value": {
+                    "email": "baker@sweetcrumbs.example",
+                    "role": "branch_staff",
+                    "branchId": "6f1c3a52-0000-4000-8000-000000000000"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The invitation was sent"
+          },
+          "403": {
+            "description": "Your role may not invite, or only an owner may invite an owner"
+          },
+          "422": {
+            "description": "Invalid field, role or branch, or the address cannot be used (the `error` list says which)"
+          },
+          "503": {
+            "description": "The email could not be sent"
+          }
+        }
+      }
+    },
+    "/v1/tenant/team/invites/{inviteId}": {
+      "parameters": [
+        {
+          "name": "inviteId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "delete": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "Cancel an invitation",
+        "description": "Needs `team:manage`. The link stops working at once. Only an owner can cancel an owner invitation. Another bakery's invitation is a 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled"
+          },
+          "403": {
+            "description": "Only an owner may cancel an owner invitation"
+          },
+          "404": {
+            "description": "No such invitation in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/team/{memberId}": {
+      "parameters": [
+        {
+          "name": "memberId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "Get one person",
+        "description": "Needs `team:view`. The list row plus `permissions`, `activeSessions` (devices signed in now),\n`lockedUntil` and the last 20 things they did (`recentActivity`). A person of another bakery is a 404.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such person in this bakery"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "Change a person",
+        "description": "Needs `team:manage`. Send only what changes (at least one field): `name`, `role`, `branchId` or\n`isActive`. Sending what is already set changes nothing and is not logged. Changing to a role that\nworks across all branches clears the branch. `isActive: false` switches the person off and signs them\nout everywhere at once; `true` brings them back and clears any lock.\n\nRules that keep a bakery from locking itself out: nobody changes their own role or switches\nthemselves off (422); a manager cannot change an owner or make anyone an owner (403); a bakery\nalways keeps at least one active owner (422). Email and bakery cannot be sent.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "rename": {
+                  "summary": "Rename",
+                  "value": {
+                    "name": "Mina M."
+                  }
+                },
+                "move": {
+                  "summary": "Move to another branch",
+                  "value": {
+                    "branchId": "6f1c3a52-0000-4000-8000-000000000000"
+                  }
+                },
+                "switchOff": {
+                  "summary": "Switch off",
+                  "value": {
+                    "isActive": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not change this person"
+          },
+          "404": {
+            "description": "No such person in this bakery"
+          },
+          "422": {
+            "description": "Invalid field, own role or account, role and branch do not fit, or the last owner"
+          }
+        }
+      }
+    },
+    "/v1/tenant/team/{memberId}/revoke-sessions": {
+      "parameters": [
+        {
+          "name": "memberId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "Sign someone out everywhere",
+        "description": "Needs `team:manage`. Every device is signed out and every token stops working. The person can sign in again. Only an owner can do this to an owner.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The person, now with no sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only an owner may do this to an owner"
+          },
+          "404": {
+            "description": "No such person in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/team/{memberId}/unlock": {
+      "parameters": [
+        {
+          "name": "memberId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Team"
+        ],
+        "summary": "Unlock an account",
+        "description": "Needs `team:manage`. Lifts the lock that too many wrong passwords cause, so the person can try again at once.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The person, no longer locked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only an owner may do this to an owner"
+          },
+          "404": {
+            "description": "No such person in this bakery"
+          }
+        }
+      }
+    },
+    "/v1/tenant/plan": {
+      "get": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "The bakery's plan and usage",
+        "description": "Needs `plan:view` (owner). Read only: what plan the bakery is on, what it costs, when it renews, and\nhow much of it is used. Stripe ids and links never appear here; changing the plan or the card is done by\nBake My App staff for now. `price.amount` is in cents (`29900` is 299.00) and is `null` for a plan sold by\nquote. `usage.branches.limit` is `null` when the plan has no limit. `paymentProblem` is true while a payment\nis failing and being retried: show a notice. `status` is `trial`, `active`, `past_due`, `suspended`, `paused`\nor `cancelled`.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Your role may not see the plan"
+          }
+        }
+      }
+    },
+    "/v1/assets/{assetId}": {
+      "parameters": [
+        {
+          "name": "assetId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "A bakery's uploaded file (public)",
+        "description": "The address of a logo (the `logo.url` in the branding). No token: anyone with the address can show\nit, from any website (`img`, CSS, or a canvas). Every upload has its own address that never changes\nits content, so it is cached for a year (`immutable`). Served so it can be shown but never run: with\n`nosniff`, a sandboxing policy and permission to be embedded cross-origin.\n",
+        "responses": {
+          "200": {
+            "description": "The file",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file (or it was replaced or removed)"
+          }
+        }
+      }
+    },
+    "/v1/app/config": {
+      "get": {
+        "tags": [
+          "App"
+        ],
+        "summary": "App config (public)",
+        "description": "The call a bakery's mobile app makes on every start, before anyone signs in, and the web\nstorefront makes on load. No token. Name the bakery with the `X-Tenant` header (its slug); a web\npage that cannot send custom headers may use `?tenant=<slug>` instead (the header wins when both\nare present). The slug is built into each bakery's app build.\n\nThe answer is cached for a minute (`Cache-Control: public, max-age=60`, `Vary: X-Tenant`), so a\ncolour change shows within a minute and the next time the app opens. The app must wait at most 4\nseconds; if the call fails or the bakery is unknown (404, also for a suspended bakery) the app keeps\nits last config or its defaults and never crashes. A bakery still being set up already answers, so\nthe app can be tested early. Any website may call it from a browser (no cookies are involved).\n\nThe app builds every other shade from `theme.primary` by itself. `theme.preset` is the id of one\nof the 18 presets, or `custom`.\n",
+        "parameters": [
+          {
+            "name": "X-Tenant",
+            "in": "header",
+            "required": false,
+            "description": "The bakery's slug, for example `sweet-crumbs`",
+            "schema": {
+              "type": "string",
+              "example": "sweet-crumbs"
+            }
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "required": false,
+            "description": "The slug again, for callers that cannot send a header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bakery's config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown, malformed or suspended bakery. Keep the defaults."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The `accessToken` from sign-in"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "message": {
+            "type": "string",
+            "example": "Incorrect email or password"
+          },
+          "error": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "TenantUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "example": "owner@sweetcrumbs.example"
+          },
+          "name": {
+            "type": "string",
+            "example": "Ayesha Khan"
+          },
+          "role": {
+            "type": "string",
+            "example": "tenant_owner",
+            "description": "tenant_owner, tenant_manager, branch_staff or rider"
+          },
+          "roleName": {
+            "type": "string",
+            "example": "Owner"
+          },
+          "branchId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "The branch a branch staff member or rider works at. Empty for owners and managers"
+          },
+          "permissions": {
+            "type": "array",
+            "description": "What this role may do; `*` means everything a bakery has",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "*"
+            ]
+          },
+          "lastLoginAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "tenant": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "slug": {
+                "type": "string",
+                "example": "sweet-crumbs"
+              },
+              "name": {
+                "type": "string",
+                "example": "Sweet Crumbs"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "onboarding",
+                  "live",
+                  "suspended"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TenantUser"
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "accessToken": {
+                "type": "string",
+                "nullable": true,
+                "description": "Null only for a role that has no panel access (none of the built-in roles)"
+              },
+              "tokenType": {
+                "type": "string",
+                "example": "Bearer"
+              },
+              "expiresIn": {
+                "type": "integer",
+                "description": "Seconds until the access token expires",
+                "example": 900
+              },
+              "panelAccess": {
+                "type": "boolean",
+                "description": "Only present, and false, when a role has no panel access (none of the built-in roles)"
+              },
+              "user": {
+                "$ref": "#/components/schemas/TenantUser"
+              }
+            }
+          }
+        }
+      },
+      "ActivityLogResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "type": "string",
+                  "example": "auth.login"
+                },
+                "entityType": {
+                  "type": "string",
+                  "nullable": true,
+                  "example": "tenant_user"
+                },
+                "entityId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "changes": {
+                  "type": "object",
+                  "description": "What changed, for example { name: { from, to } }"
+                },
+                "actor": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "staff",
+                        "system"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "name": {
+                      "type": "string",
+                      "example": "Ayesha Khan"
+                    }
+                  }
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "itemsPerPage": {
+                "type": "integer"
+              },
+              "currentPage": {
+                "type": "integer"
+              },
+              "totalItems": {
+                "type": "integer"
+              },
+              "totalPages": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "SetupResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "example": "business",
+                      "description": "business, branding, branch, menu, payments or team"
+                    },
+                    "title": {
+                      "type": "string",
+                      "example": "Check your business details"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string",
+                      "example": "/business"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    },
+                    "available": {
+                      "type": "boolean",
+                      "description": "Does that part of the panel exist yet? Hide the step when false"
+                    },
+                    "done": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "progress": {
+                "type": "object",
+                "properties": {
+                  "done": {
+                    "type": "integer"
+                  },
+                  "total": {
+                    "type": "integer"
+                  },
+                  "percent": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "complete": {
+                "type": "boolean",
+                "description": "True only when every required step exists and is done"
+              }
+            }
+          }
+        }
+      },
+      "BusinessResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "example": "Sweet Crumbs"
+              },
+              "slug": {
+                "type": "string",
+                "example": "sweet-crumbs",
+                "description": "Read only"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "onboarding",
+                  "live",
+                  "suspended"
+                ],
+                "description": "Read only"
+              },
+              "timezone": {
+                "type": "string",
+                "example": "Asia/Karachi"
+              },
+              "currencyCode": {
+                "type": "string",
+                "example": "PKR"
+              },
+              "contactEmail": {
+                "type": "string",
+                "nullable": true
+              },
+              "contactPhone": {
+                "type": "string",
+                "nullable": true,
+                "example": "+923001234567"
+              },
+              "confirmed": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "BrandingResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "preset": {
+                "type": "string",
+                "example": "violet",
+                "description": "A preset id, or custom"
+              },
+              "primary": {
+                "type": "string",
+                "example": "#903BFF"
+              },
+              "appName": {
+                "type": "string",
+                "nullable": true
+              },
+              "currencySymbol": {
+                "type": "string",
+                "example": "Rs"
+              },
+              "logo": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "url": {
+                    "type": "string",
+                    "example": "https://api.example.com/v1/assets/3f0c8c1e-6a52-4b7e-9d0a-1f5d7b2c9e44"
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "example": "image/png"
+                  },
+                  "sizeBytes": {
+                    "type": "integer"
+                  },
+                  "width": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Null for an SVG"
+                  },
+                  "height": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              },
+              "confirmed": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "BranchListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "example": "Clifton"
+          },
+          "addressLine1": {
+            "type": "string",
+            "example": "Shop 4, Block 5"
+          },
+          "addressLine2": {
+            "type": "string",
+            "nullable": true
+          },
+          "area": {
+            "type": "string",
+            "nullable": true,
+            "example": "Clifton"
+          },
+          "city": {
+            "type": "string",
+            "example": "Karachi"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "example": "+922135000000"
+          },
+          "isActive": {
+            "type": "boolean",
+            "description": "False when switched off (\"deleted\")"
+          },
+          "isAcceptingOrders": {
+            "type": "boolean",
+            "description": "False while paused"
+          },
+          "pausedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "acceptsDelivery": {
+            "type": "boolean"
+          },
+          "acceptsPickup": {
+            "type": "boolean"
+          },
+          "deliveryFee": {
+            "type": "integer",
+            "example": 15000,
+            "description": "Paisa or cents (15000 is 150.00)"
+          },
+          "minimumOrder": {
+            "type": "integer",
+            "example": 100000,
+            "description": "Paisa or cents"
+          },
+          "prepTimeMinutes": {
+            "type": "integer",
+            "example": 30
+          },
+          "sortOrder": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed",
+              "paused",
+              "inactive"
+            ],
+            "description": "Worked out now, in the bakery's time zone. paused wins over the hours"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BranchHour": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7,
+            "description": "1 is Monday, 7 is Sunday"
+          },
+          "isClosed": {
+            "type": "boolean"
+          },
+          "opensAt": {
+            "type": "string",
+            "nullable": true,
+            "example": "09:00"
+          },
+          "closesAt": {
+            "type": "string",
+            "nullable": true,
+            "example": "21:00"
+          }
+        }
+      },
+      "BranchListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BranchListItem"
+            }
+          }
+        }
+      },
+      "BranchResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BranchListItem"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "hours": {
+                    "type": "array",
+                    "description": "Seven days, Monday first",
+                    "items": {
+                      "$ref": "#/components/schemas/BranchHour"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Delivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "example": 1042
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "out_for_delivery",
+              "completed"
+            ]
+          },
+          "branch": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "phone": {
+                "type": "string"
+              }
+            }
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "recipientName": {
+                "type": "string"
+              },
+              "phone": {
+                "type": "string"
+              },
+              "addressLine1": {
+                "type": "string"
+              },
+              "addressLine2": {
+                "type": "string",
+                "nullable": true
+              },
+              "area": {
+                "type": "string",
+                "nullable": true
+              },
+              "city": {
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string",
+                "nullable": true,
+                "description": "A note for the rider"
+              }
+            }
+          },
+          "paymentMethod": {
+            "type": "string",
+            "enum": [
+              "cod",
+              "card"
+            ]
+          },
+          "paymentStatus": {
+            "type": "string",
+            "enum": [
+              "unpaid",
+              "paid",
+              "refunded",
+              "refund_failed"
+            ],
+            "description": "refund_failed is a cancelled card order whose refund did not go through: refund it by hand in Stripe"
+          },
+          "currencySymbol": {
+            "type": "string",
+            "example": "Rs"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Paisa or cents"
+          },
+          "amountDue": {
+            "type": "integer",
+            "description": "Cash to collect at the door: the total for an unpaid cash order, else 0"
+          },
+          "itemCount": {
+            "type": "integer"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "placedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "estimatedReadyAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DeliveryListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Delivery"
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "itemsPerPage": {
+                "type": "integer"
+              },
+              "currentPage": {
+                "type": "integer"
+              },
+              "totalItems": {
+                "type": "integer"
+              },
+              "totalPages": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "DeliverySummaryResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "integer",
+                "description": "Ready deliveries nobody has taken, at the rider's branch"
+              },
+              "mine": {
+                "type": "integer",
+                "description": "Deliveries this rider is carrying"
+              }
+            }
+          }
+        }
+      },
+      "DeliveryResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Delivery"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "description": "Only in the detail and after taking, handing over or handing back",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "productName": {
+                          "type": "string"
+                        },
+                        "sizeName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "quantity": {
+                          "type": "integer"
+                        },
+                        "note": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "addons": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "OrderSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "example": 1042,
+            "description": "The bakery's own running number, as the customer knows it"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "placed",
+              "accepted",
+              "preparing",
+              "ready",
+              "out_for_delivery",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "fulfilment": {
+            "type": "string",
+            "enum": [
+              "delivery",
+              "pickup"
+            ]
+          },
+          "paymentMethod": {
+            "type": "string",
+            "enum": [
+              "cod",
+              "card"
+            ]
+          },
+          "paymentStatus": {
+            "type": "string",
+            "enum": [
+              "unpaid",
+              "paid",
+              "refunded",
+              "refund_failed"
+            ],
+            "description": "refund_failed is a cancelled card order whose refund did not go through: refund it by hand in Stripe"
+          },
+          "currencySymbol": {
+            "type": "string",
+            "example": "Rs"
+          },
+          "subtotal": {
+            "type": "integer",
+            "description": "Paisa or cents"
+          },
+          "deliveryFee": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "itemCount": {
+            "type": "integer",
+            "description": "Total quantity"
+          },
+          "customer": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "phone": {
+                "type": "string"
+              }
+            }
+          },
+          "branch": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "area": {
+            "type": "string",
+            "nullable": true,
+            "description": "For delivery only"
+          },
+          "city": {
+            "type": "string",
+            "nullable": true,
+            "description": "For delivery only"
+          },
+          "rider": {
+            "type": "object",
+            "nullable": true,
+            "description": "Who is taking a delivery out, once one is",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "placedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "estimatedReadyAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nextStatuses": {
+            "type": "array",
+            "description": "Where the order can go from here. Show buttons only for these",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "OrderListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderSummary"
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "itemsPerPage": {
+                "type": "integer"
+              },
+              "currentPage": {
+                "type": "integer"
+              },
+              "totalItems": {
+                "type": "integer"
+              },
+              "totalPages": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "OrderSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "placed": {
+                "type": "integer",
+                "description": "Waiting for the bakery to accept"
+              },
+              "accepted": {
+                "type": "integer"
+              },
+              "preparing": {
+                "type": "integer"
+              },
+              "ready": {
+                "type": "integer"
+              },
+              "out_for_delivery": {
+                "type": "integer"
+              },
+              "active": {
+                "type": "integer",
+                "description": "All of the above"
+              },
+              "refundsNeeded": {
+                "type": "integer",
+                "description": "Cancelled card orders whose refund failed: the owner must refund them by hand"
+              }
+            }
+          }
+        }
+      },
+      "OrderDetailResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderSummary"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "customer": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "nullable": true,
+                        "description": "Empty once the customer deleted their account"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "address": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "Only for delivery",
+                    "properties": {
+                      "recipientName": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": "string"
+                      },
+                      "addressLine1": {
+                        "type": "string"
+                      },
+                      "addressLine2": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "area": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "city": {
+                        "type": "string"
+                      },
+                      "instructions": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "A note for the rider"
+                      }
+                    }
+                  },
+                  "notes": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The customer's note for the whole order"
+                  },
+                  "payment": {
+                    "type": "object",
+                    "description": "How the order was paid",
+                    "properties": {
+                      "method": {
+                        "type": "string",
+                        "enum": [
+                          "cod",
+                          "card"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "unpaid",
+                          "paid",
+                          "refunded",
+                          "refund_failed"
+                        ]
+                      },
+                      "reference": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "A card order's payment id in the bakery's own Stripe dashboard"
+                      }
+                    }
+                  },
+                  "cancelledAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "cancelledBy": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "customer",
+                      "bakery"
+                    ]
+                  },
+                  "cancelReason": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "productId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "nullable": true
+                        },
+                        "productName": {
+                          "type": "string"
+                        },
+                        "sizeName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "unitPrice": {
+                          "type": "integer"
+                        },
+                        "quantity": {
+                          "type": "integer"
+                        },
+                        "note": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "lineTotal": {
+                          "type": "integer"
+                        },
+                        "addons": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "setName": {
+                                "type": "string"
+                              },
+                              "optionName": {
+                                "type": "string"
+                              },
+                              "price": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "events": {
+                    "type": "array",
+                    "description": "The order's story, oldest first",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "to": {
+                          "type": "string"
+                        },
+                        "actor": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "customer",
+                                "user"
+                              ]
+                            },
+                            "name": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          }
+                        },
+                        "note": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The reason, when cancelled"
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Payments": {
+        "type": "object",
+        "properties": {
+          "cod": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "note": {
+                "type": "string",
+                "nullable": true,
+                "description": "A line shown to customers who pay in cash"
+              }
+            }
+          },
+          "card": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "provider": {
+                "type": "string",
+                "example": "stripe"
+              },
+              "configured": {
+                "type": "boolean",
+                "description": "Keys are saved"
+              },
+              "publishableKey": {
+                "type": "string",
+                "nullable": true,
+                "example": "YOUR_STRIPE_PUBLISHABLE_KEY"
+              },
+              "secretKeyHint": {
+                "type": "string",
+                "nullable": true,
+                "example": "sk_test_����1234",
+                "description": "Never the key itself"
+              },
+              "mode": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "test",
+                  "live"
+                ]
+              },
+              "accountId": {
+                "type": "string",
+                "nullable": true,
+                "example": "acct_1234"
+              },
+              "verifiedAt": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true,
+                "description": "When the key last passed a test with Stripe"
+              },
+              "ready": {
+                "type": "boolean",
+                "description": "The saved key passed its last test, so cards can be switched on"
+              }
+            }
+          },
+          "usable": {
+            "type": "boolean",
+            "description": "Customers have at least one way to pay"
+          },
+          "confirmedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "PaymentsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Payments"
+          }
+        }
+      },
+      "PaymentsTestResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "description": "Stripe accepted the saved key"
+              },
+              "message": {
+                "type": "string"
+              },
+              "payments": {
+                "$ref": "#/components/schemas/Payments"
+              }
+            }
+          }
+        }
+      },
+      "MenuCategory": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "example": "Cakes"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "sortOrder": {
+            "type": "integer"
+          },
+          "productCount": {
+            "type": "integer",
+            "description": "Products that are switched on"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "MenuCategoryResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MenuCategory"
+          }
+        }
+      },
+      "MenuCategoryListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MenuCategory"
+            }
+          }
+        }
+      },
+      "MenuAddonOption": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "example": "Roasted nuts"
+          },
+          "price": {
+            "type": "integer",
+            "description": "Extra cost in paisa or cents; 0 is free",
+            "example": 5000
+          },
+          "isAvailable": {
+            "type": "boolean",
+            "description": "False when sold out"
+          }
+        }
+      },
+      "MenuAddonSet": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "example": "Toppings"
+          },
+          "minSelect": {
+            "type": "integer",
+            "description": "How many the customer must pick"
+          },
+          "maxSelect": {
+            "type": "integer",
+            "nullable": true,
+            "description": "How many at most; null for any number"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "sortOrder": {
+            "type": "integer"
+          },
+          "productCount": {
+            "type": "integer"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MenuAddonOption"
+            }
+          }
+        }
+      },
+      "MenuAddonSetResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MenuAddonSet"
+          }
+        }
+      },
+      "MenuAddonSetListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MenuAddonSet"
+            }
+          }
+        }
+      },
+      "MenuPhoto": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string",
+            "description": "Public address of the picture"
+          },
+          "contentType": {
+            "type": "string",
+            "example": "image/jpeg"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          }
+        }
+      },
+      "MenuProductListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "example": "Chocolate cake"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "category": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "price": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Paisa or cents; null when sizes carry the prices",
+            "example": 250000
+          },
+          "priceFrom": {
+            "type": "integer",
+            "nullable": true,
+            "description": "The price, or the lowest size: show as from"
+          },
+          "hasSizes": {
+            "type": "boolean"
+          },
+          "photo": {
+            "$ref": "#/components/schemas/MenuPhoto"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "sortOrder": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "MenuProductListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MenuProductListItem"
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "itemsPerPage": {
+                "type": "integer"
+              },
+              "currentPage": {
+                "type": "integer"
+              },
+              "totalItems": {
+                "type": "integer"
+              },
+              "totalPages": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "MenuProductResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MenuProductListItem"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "sizes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string",
+                          "example": "1 lb"
+                        },
+                        "price": {
+                          "type": "integer",
+                          "example": 250000
+                        }
+                      }
+                    }
+                  },
+                  "addonSets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "isActive": {
+                          "type": "boolean"
+                        },
+                        "minSelect": {
+                          "type": "integer"
+                        },
+                        "maxSelect": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "options": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MenuAddonOption"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "branches": {
+                    "type": "array",
+                    "description": "Every branch that is switched on",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "available": {
+                          "type": "boolean",
+                          "description": "Whether this branch sells the product"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "TeamListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "example": "manager@sweetcrumbs.example"
+          },
+          "name": {
+            "type": "string",
+            "example": "Mina Manager"
+          },
+          "role": {
+            "type": "string",
+            "example": "tenant_manager"
+          },
+          "roleName": {
+            "type": "string",
+            "example": "Manager"
+          },
+          "canSignIn": {
+            "type": "boolean",
+            "description": "True for every built-in role; false only if a role has no panel access"
+          },
+          "branch": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string",
+                "example": "Clifton"
+              }
+            }
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "isLocked": {
+            "type": "boolean"
+          },
+          "lastLoginAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TeamListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamListItem"
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "itemsPerPage": {
+                "type": "integer"
+              },
+              "currentPage": {
+                "type": "integer"
+              },
+              "totalItems": {
+                "type": "integer"
+              },
+              "totalPages": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "TeamMemberResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeamListItem"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "activeSessions": {
+                    "type": "integer"
+                  },
+                  "lockedUntil": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "recentActivity": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "action": {
+                          "type": "string",
+                          "example": "auth.login"
+                        },
+                        "entityType": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "entityId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "TeamRolesResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "example": "branch_staff"
+                },
+                "name": {
+                  "type": "string",
+                  "example": "Branch staff"
+                },
+                "permissions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "canSignIn": {
+                  "type": "boolean"
+                },
+                "requiresBranch": {
+                  "type": "boolean"
+                },
+                "assignable": {
+                  "type": "boolean",
+                  "description": "Whether the signed-in person may give this role out"
+                }
+              }
+            }
+          }
+        }
+      },
+      "TeamInvitesResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "role": {
+                  "type": "string"
+                },
+                "roleName": {
+                  "type": "string"
+                },
+                "branch": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "invitedBy": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "staff"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "expired": {
+                  "type": "boolean"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      },
+      "PlanResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "plan": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "example": "growth"
+                  },
+                  "name": {
+                    "type": "string",
+                    "example": "Growth"
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "features": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limits": {
+                    "type": "object",
+                    "example": {
+                      "locations": 3
+                    }
+                  }
+                }
+              },
+              "billingInterval": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "month",
+                  "year"
+                ]
+              },
+              "price": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "example": 29900,
+                    "description": "Cents"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "example": "usd"
+                  },
+                  "interval": {
+                    "type": "string",
+                    "example": "month"
+                  },
+                  "planName": {
+                    "type": "string"
+                  }
+                }
+              },
+              "status": {
+                "type": "string",
+                "nullable": true,
+                "example": "trial"
+              },
+              "trialEndsAt": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "currentPeriodEnd": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "cancelAtPeriodEnd": {
+                "type": "boolean"
+              },
+              "paymentProblem": {
+                "type": "boolean"
+              },
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "branches": {
+                    "type": "object",
+                    "properties": {
+                      "used": {
+                        "type": "integer"
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Null means no limit"
+                      }
+                    }
+                  },
+                  "team": {
+                    "type": "object",
+                    "properties": {
+                      "used": {
+                        "type": "integer",
+                        "description": "Active people in the bakery"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "AppConfigResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": "Config fetched"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "app_name": {
+                "type": "string",
+                "example": "Sweet Crumbs",
+                "description": "The name shown inside the app"
+              },
+              "currency_symbol": {
+                "type": "string",
+                "example": "Rs",
+                "description": "Shown before every price"
+              },
+              "logo_url": {
+                "type": "string",
+                "nullable": true,
+                "example": "https://api.example.com/v1/assets/1f0c",
+                "description": "The bakery's logo (PNG, JPEG, WebP or SVG, up to 2 MB as uploaded), or null until the owner uploads one. The address changes when a new logo is uploaded, so cache by address"
+              },
+              "min_app_version": {
+                "type": "string",
+                "nullable": true,
+                "example": "2.1.0",
+                "description": "The oldest app version that may still be used, for example 2.1.0, or null when there is no minimum. If the installed version is older, show an update screen"
+              },
+              "support_phone": {
+                "type": "string",
+                "nullable": true,
+                "example": "02135000000",
+                "description": "The bakery's phone from its Business screen, or null until the owner fills it in"
+              },
+              "support_email": {
+                "type": "string",
+                "nullable": true,
+                "example": "hello@sweetcrumbs.example",
+                "description": "The bakery's contact email from its Business screen, or null"
+              },
+              "currency_code": {
+                "type": "string",
+                "example": "PKR",
+                "description": "ISO 4217 code of the bakery's currency. Amounts are always whole hundredths of it"
+              },
+              "timezone": {
+                "type": "string",
+                "example": "Asia/Karachi",
+                "description": "The bakery's IANA time zone, which its branch hours and open or closed status use"
+              },
+              "accepting_orders": {
+                "type": "boolean",
+                "description": "True only while the bakery is live. False while it is still being set up: show a coming-soon state instead of a checkout that would be refused"
+              },
+              "theme": {
+                "type": "object",
+                "properties": {
+                  "preset": {
+                    "type": "string",
+                    "example": "violet",
+                    "description": "A preset id, or custom"
+                  },
+                  "primary": {
+                    "type": "string",
+                    "example": "#903BFF",
+                    "description": "Always #RRGGBB"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
