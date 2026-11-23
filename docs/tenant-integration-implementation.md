@@ -7,12 +7,12 @@ Stripe examples in the snapshot use `YOUR_STRIPE_SECRET_KEY` and `YOUR_STRIPE_PU
 ## Running the panel
 
 1. Copy `.env.example` to `.env.local` and set `VITE_API_URL` to the backend origin, without `/v1/tenant`.
-2. Run `npm run dev` and open `http://localhost:5174/?dashboard`.
+2. Run `npm run dev` and open `http://localhost:5174/`. The root URL and legacy `/app` URL open sign-in directly; `/?dashboard` remains compatible.
 3. Sign in with an existing bakery owner, manager, or branch-staff account. No credentials are bundled.
 
 The backend must allow the panel origin in `TENANT_CORS_ORIGINS`. For localhost calling the remote dev API, the guide requires `ADMIN_COOKIE_SAME_SITE=none` so the refresh cookie can cross sites. Browser third-party-cookie settings also apply.
 
-Tenant data now comes from the API. Old mock orders and browser-stored menu/branch data are not used or silently uploaded. Onboarding and other modules retain their existing behavior.
+Tenant data now comes from the API. Old mock orders and browser-stored menu/branch data are not used or silently uploaded. The onboarding setup page has been removed; authenticated users enter the dashboard directly. Other modules retain their existing behavior.
 
 ## Implemented endpoint coverage
 

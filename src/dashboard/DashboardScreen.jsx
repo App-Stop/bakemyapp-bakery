@@ -14,8 +14,6 @@ import {
   PaintBoardIcon,
   DiscountIcon,
   CroissantIcon,
-  ArrowLeft02Icon,
-  SmartPhone01Icon,
   Menu01Icon,
   Cancel01Icon,
 } from '@hugeicons/core-free-icons'
@@ -34,8 +32,10 @@ import { SettingsView } from './settings/SettingsView'
 import { OrdersView } from './orders/OrdersView'
 import { useTenant } from '../lib/TenantContext'
 import { can } from '../lib/tenant'
+import { DesignIcon } from './shared/CatalogUI'
 
 const TIME_RANGES = ['Today', '7d', '30d', '6mo', '1y']
+const DESIGN_NAV_ICONS = { overview: 'bc1b9', menu: '4b588', branches: 'b33e1', orders: '5fa5c', customers: '29069', promo: '7cd30', analytics: 'fc6bd', settings: '4dac1' }
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: DashboardCircleIcon },
@@ -49,13 +49,14 @@ const NAV_ITEMS = [
 ]
 
 /** `className` sizes the screen: the full viewport by default, `h-full` inside a demo frame. */
-export function DashboardScreen({ state, actions, onEdit, onStartOver, className = 'h-screen', sidebarLogo }) {
+export function DashboardScreen({ state, actions, className = 'h-screen', sidebarLogo }) {
   const { user, logout } = useTenant()
   const [activeNav, setActiveNav] = useState(user.role === 'branch_staff' ? 'orders' : can(user, 'menu:view') ? 'menu' : can(user, 'branches:view') ? 'branches' : 'orders')
   const [orderBranchId, setOrderBranchId] = useState('')
   const [activeTimeRange, setActiveTimeRange] = useState('7d')
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
+  const catalogDesign = activeNav === 'orders' || activeNav === 'menu'
 
   const shopName = user.tenant?.name || state.shop?.name?.trim() || 'Your bakery'
   const shopTagline = state.shop?.tagline?.trim() || 'Freshly baked goods'
@@ -149,7 +150,7 @@ export function DashboardScreen({ state, actions, onEdit, onStartOver, className
         <p className={`min-w-0 flex-1 truncate text-base font-semibold text-ink ${sidebarLogo ? 'max-sm:hidden' : ''}`}>{activeLabel}</p>
         {sidebarLogo && <div className="h-[37.944px] w-[52.08px] shrink-0 sm:hidden [&>*]:!size-full">{sidebarLogo}</div>}
         <div className="flex size-9 shrink-0 overflow-hidden rounded-full bg-[#f0ece9]">
-          <img src={state.shop?.logo || userAvatarImg} alt="" className="size-full object-cover" />
+          <img src={state.shop?.logo || (catalogDesign ? '/figma/catalog/80d35.png' : userAvatarImg)} alt="" className="size-full object-cover" />
         </div>
       </header>
 
@@ -165,7 +166,7 @@ export function DashboardScreen({ state, actions, onEdit, onStartOver, className
       {/* Sidebar */}
       <aside
         id="dashboard-sidebar"
-        className={`flex w-[260px] min-w-[260px] flex-col justify-between overflow-y-auto border-r border-[#f0ece9] bg-white px-5 py-5 shrink-0 transition-transform duration-300 max-lg:absolute max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:max-w-[85%] max-lg:min-w-0 max-lg:shadow-2xl lg:py-8 ${
+        className={`flex w-[260px] min-w-[260px] flex-col ${catalogDesign ? 'justify-start gap-10' : 'justify-between'} overflow-y-auto border-r border-[#f0ece9] bg-white px-5 py-5 shrink-0 transition-transform duration-300 max-lg:absolute max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:max-w-[85%] max-lg:min-w-0 max-lg:shadow-2xl lg:py-8 ${
           navOpen ? '' : 'max-lg:invisible max-lg:-translate-x-full'
         }`}
       >
@@ -191,7 +192,7 @@ export function DashboardScreen({ state, actions, onEdit, onStartOver, className
                 {state.shop?.logo ? (
                   <img src={state.shop.logo} alt="" className="size-full object-contain p-1.5" />
                 ) : (
-                  <HugeiconsIcon icon={CroissantIcon} size={28} color="currentColor" />
+                  catalogDesign ? <DesignIcon file="98c00" /> : <HugeiconsIcon icon={CroissantIcon} size={28} color="currentColor" />
                 )}
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
@@ -221,12 +222,12 @@ export function DashboardScreen({ state, actions, onEdit, onStartOver, className
                       : 'text-body hover:bg-[#f5f5f5] font-normal'
                   }`}
                 >
-                  <HugeiconsIcon
+                  {catalogDesign ? <DesignIcon file={isActive ? item.id === 'menu' ? 'b16db' : '7b7cb' : DESIGN_NAV_ICONS[item.id]} /> : <HugeiconsIcon
                     icon={Icon}
                     size={20}
                     color={isActive ? 'var(--brand)' : 'currentColor'}
                     className="shrink-0"
-                  />
+                  />}
                   <span className="text-sm">{item.label}</span>
                 </button>
               )
@@ -235,15 +236,16 @@ export function DashboardScreen({ state, actions, onEdit, onStartOver, className
         </div>
 
         {/* User Capsule */}
-        <div className="relative flex flex-col gap-4 border-t border-[#f0ece9] pt-5">
+        <div className={`relative flex flex-col ${catalogDesign ? 'gap-5' : 'gap-4 border-t border-[#f0ece9] pt-5'}`}>
+          {catalogDesign && <DesignIcon file="f5ba5" className="self-start" />}
           <button
             type="button"
             onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex w-full items-center gap-3 rounded-xl p-1.5 text-left transition-colors hover:bg-[#f5f5f5]"
+            className={`flex w-full items-center gap-3 rounded-xl ${catalogDesign ? '' : 'p-1.5'} text-left transition-colors hover:bg-[#f5f5f5]`}
           >
             <div className="size-9 shrink-0 overflow-hidden rounded-full bg-[#f0ece9]">
               <img
-                src={state.shop?.logo || userAvatarImg}
+                src={state.shop?.logo || (catalogDesign ? '/figma/catalog/80d35.png' : userAvatarImg)}
                 alt=""
                 className="size-full object-cover"
               />
@@ -270,28 +272,6 @@ export function DashboardScreen({ state, actions, onEdit, onStartOver, className
                 <HugeiconsIcon icon={Setting07Icon} size={16} />
                 <span>Store Settings</span>
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowUserMenu(false)
-                  onEdit?.()
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-ink hover:bg-[#f5f5f5] cursor-pointer"
-              >
-                <HugeiconsIcon icon={SmartPhone01Icon} size={16} />
-                <span>Storefront Preview &amp; Edit</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowUserMenu(false)
-                  onStartOver?.()
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-[#f30000] hover:bg-[#fff0f0] cursor-pointer"
-              >
-                <HugeiconsIcon icon={ArrowLeft02Icon} size={16} />
-                <span>Start New Store</span>
-              </button>
               </>}
             </div>
           )}
@@ -299,13 +279,13 @@ export function DashboardScreen({ state, actions, onEdit, onStartOver, className
       </aside>
 
       {/* Main Content Area */}
-      <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 xl:p-10 max-sm:pt-4 max-sm:pb-10">
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 xl:p-10 max-sm:pt-4 max-sm:pb-10">
         {activeNav === 'orders' ? (
           <OrdersView key={orderBranchId} initialBranchId={orderBranchId} />
         ) : activeNav === 'settings' ? (
           <SettingsView state={state} actions={actions} onNavigate={setActiveNav} />
         ) : activeNav === 'menu' ? (
-          <MenuView onboardingState={state} />
+          <MenuView />
         ) : activeNav === 'branches' ? (
           <BranchesView onNavigateToOrders={(branchId) => { setOrderBranchId(branchId); setActiveNav('orders') }} />
         ) : activeNav === 'customers' ? (

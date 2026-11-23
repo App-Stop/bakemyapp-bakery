@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { tenant, can } from '../lib/tenant'
 import { TenantContext } from '../lib/TenantContext'
-import { ErrorMessage, Field, primaryClass, buttonClass } from './shared/ApiUI'
+import { ErrorMessage, buttonClass } from './shared/ApiUI'
+import { SignInPage } from './SignInPage'
 
 export function TenantSession({ children }) {
   const [user, setUser] = useState(null)
@@ -37,7 +38,7 @@ export function TenantSession({ children }) {
     try { await tenant.post('auth/logout'); api.setToken(null); setUser(null); setBranding(null) } catch (err) { setError(err) }
   }
   if (loading) return <p role="status" className="p-10">Restoring your session…</p>
-  if (!user) return <div className="flex min-h-screen items-center justify-center bg-[#f5f5f5] p-5"><form onSubmit={login} className="flex w-full max-w-md flex-col gap-5 rounded-[20px] bg-white p-8"><h1 className="text-2xl font-semibold">Sign in to your bakery</h1><ErrorMessage error={error} /><Field label="Email" name="email" type="email" autoComplete="username" required errors={error?.fieldErrors} /><Field label="Password" name="password" type="password" autoComplete="current-password" required errors={error?.fieldErrors} /><button disabled={busy} className={primaryClass}>{busy ? 'Signing in…' : 'Sign in'}</button></form></div>
+  if (!user) return <SignInPage onSubmit={login} busy={busy} error={error} />
   if (!can(user, 'orders:view') && !can(user, 'menu:view') && !can(user, 'branches:view')) return <div className="p-10"><p>This account has no access to Menu, Branches or Orders. Riders use the separate Deliveries portal.</p><button onClick={logout} className={buttonClass}>Sign out</button></div>
   return <TenantContext.Provider value={{ user, branding, logout }}>{error && <div className="fixed top-4 right-4 z-[60] max-w-md"><ErrorMessage error={error} /></div>}{children}</TenantContext.Provider>
 }
