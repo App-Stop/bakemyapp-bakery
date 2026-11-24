@@ -1,3 +1,4 @@
+import { Skeleton, SkeletonRows } from '../shared/Skeleton'
 import { useCallback, useState } from 'react'
 import { can, dateTime, money, tenant } from '../../lib/tenant'
 import { useTenant } from '../../lib/TenantContext'
@@ -60,9 +61,9 @@ export function OrdersView({ initialBranchId = '' }) {
     <ErrorMessage error={error || list.error || summary.error || metrics.error || branches.error} />
     {notice && <p role="status" className="catalog-notice">{notice}</p>}
     <div className="order-stats dash-stats">
-      <section title="Collected revenue for the selected dates"><p>Total Revenue</p><strong>{stats ? money(stats.revenue, stats.symbol || branding?.currencySymbol) : '—'}</strong></section>
-      <section title="Average non-cancelled orders per branch with orders in the selected dates"><p>Order per Branch</p><strong>{stats?.perBranch ?? '—'}</strong></section>
-      <section><p>Most ordered branch</p><strong className="order-top-branch">{stats?.topBranch || '—'}</strong></section>
+      <section title="Collected revenue for the selected dates"><p>Total Revenue</p><strong>{metrics.loading && !metrics.data ? <Skeleton variant="metric" label="Loading revenue" /> : stats ? money(stats.revenue, stats.symbol || branding?.currencySymbol) : '—'}</strong></section>
+      <section title="Average non-cancelled orders per branch with orders in the selected dates"><p>Order per Branch</p><strong>{metrics.loading && !metrics.data ? <Skeleton variant="metric" label="Loading orders per branch" /> : stats?.perBranch ?? '—'}</strong></section>
+      <section><p>Most ordered branch</p><strong className="order-top-branch">{metrics.loading && !metrics.data ? <Skeleton variant="metric" label="Loading top branch" /> : stats?.topBranch || '—'}</strong></section>
     </div>
     <section className="orders-content" aria-label="Orders list">
       <div className="orders-toolbar">
@@ -84,7 +85,7 @@ export function OrdersView({ initialBranchId = '' }) {
             <td title={`${order.paymentMethod} · ${order.paymentStatus?.replaceAll('_', ' ')}`} className={order.paymentStatus === 'refund_failed' ? 'text-red-700' : ''}>{order.paymentMethod === 'cod' ? 'Cash' : 'Card'}{order.paymentStatus === 'refund_failed' && <small className="block">Refund failed</small>}</td>
             {completed ? <td className="order-date">{dateTime(order.placedAt)}</td> : <><td><span className={`order-status status-${order.status}`}>{statusLabels[order.status]}</span></td><td onClick={(event) => event.stopPropagation()}>{renderActions(order, { compact: true })}</td></>}
           </tr>)}
-          {!rows.length && <tr><td colSpan={completed ? 7 : 9} className="catalog-empty-message" role="status">{list.loading ? 'Loading orders…' : list.error ? 'Orders could not be loaded.' : 'No orders match these filters.'}</td></tr>}
+          {!rows.length && (list.loading ? <SkeletonRows columns={completed ? 7 : 9} rows={8} label="Loading orders" /> : <tr><td colSpan={completed ? 7 : 9} className="catalog-empty-message" role="status">{list.error ? 'Orders could not be loaded.' : 'No orders match these filters.'}</td></tr>)}
         </tbody></table></div>
         <CatalogPagination pagination={list.data?.pagination} page={page} count={rows.length} noun={tab ? `${tab} orders` : 'orders'} onChange={setPage} disabled={list.loading} />
       </div>

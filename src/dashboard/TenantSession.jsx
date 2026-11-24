@@ -1,9 +1,11 @@
+import { Skeleton } from './shared/Skeleton'
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { tenant, can } from '../lib/tenant'
 import { TenantContext } from '../lib/TenantContext'
 import { ErrorMessage, buttonClass } from './shared/ApiUI'
 import { SignInPage } from './SignInPage'
+import { canManagePayments } from './payments/paymentHelpers'
 
 export function TenantSession({ children }) {
   const [user, setUser] = useState(null)
@@ -37,8 +39,12 @@ export function TenantSession({ children }) {
   const logout = async () => {
     try { await tenant.post('auth/logout'); api.setToken(null); setUser(null); setBranding(null) } catch (err) { setError(err) }
   }
-  if (loading) return <p role="status" className="p-10">Restoring your session…</p>
+  if (loading) return <Skeleton variant="session" label="Restoring your session" />
   if (!user) return <SignInPage onSubmit={login} busy={busy} error={error} />
-  if (!can(user, 'orders:view') && !can(user, 'menu:view') && !can(user, 'branches:view')) return <div className="p-10"><p>This account has no access to Menu, Branches or Orders. Riders use the separate Deliveries portal.</p><button onClick={logout} className={buttonClass}>Sign out</button></div>
-  return <TenantContext.Provider value={{ user, branding, logout }}>{error && <div className="fixed top-4 right-4 z-[60] max-w-md"><ErrorMessage error={error} /></div>}{children}</TenantContext.Provider>
+  if (!can(user, 'orders:view') && !can(user, 'menu:view') && !can(user, 'branches:view') && !can(user, 'team:view') && !canManagePayments(user)) return <div className="p-10"><p>This account has no access to Menu, Branches, Orders, Team or Payments. Riders use the separate Deliveries portal.</p><button onClick={logout} className={buttonClass}>Sign out</button></div>
+  const updateStore = (store) => {
+    setUser((previous) => ({ ...previous, tenant: { ...previous.tenant, name: store.name } }))
+    setBranding((previous) => ({ ...previous, ...store }))
+  }
+  return <TenantContext.Provider value={{ user, branding, logout, updateStore }}>{error && <div className="fixed top-4 right-4 z-[60] max-w-md"><ErrorMessage error={error} /></div>}{children}</TenantContext.Provider>
 }

@@ -1,3 +1,6 @@
+import { runSkeletonChecks } from './skeleton-browser.mjs'
+import { createCommerceFixture } from './commerce-fixture.mjs'
+import { runCommerceChecks } from './commerce-browser.mjs'
 import assert from 'node:assert/strict'
 import { createServer as httpServer } from 'node:http'
 import { spawn } from 'node:child_process'
@@ -12,6 +15,11 @@ const requests = []
 const failures = []
 const designCheck = process.argv.includes('--catalog-design')
 const branchesCheck = process.argv.includes('--branches-design')
+const skeletonCheck = process.argv.includes('--skeletons')
+const teamCheck = process.argv.includes('--team') || skeletonCheck
+const paymentsCheck = process.argv.includes('--payments') || skeletonCheck
+const commerceCheck = process.argv.includes('--commerce') || skeletonCheck
+const commerceFixture = createCommerceFixture()
 const categories = [{ id: 'cat-1', name: 'Cakes', description: null, isActive: true, productCount: 1 }]
 const branch = { id: 'branch-1', name: 'Clifton', addressLine1: 'Shop 4', addressLine2: null, area: 'Clifton', city: 'Karachi', phone: '0211234567', isActive: true, isAcceptingOrders: true, status: 'open', acceptsDelivery: true, acceptsPickup: true, deliveryFee: 15000, minimumOrder: 0, prepTimeMinutes: 30, hours: Array.from({ length: 7 }, (_, i) => ({ day: i + 1, isClosed: false, opensAt: '09:00', closesAt: '21:00' })) }
 const branches = [branch]
@@ -33,6 +41,18 @@ let conflict = false
 let failPause = false
 let failDelete = false
 const paged = (rows) => ({ data: rows, pagination: { currentPage: 1, itemsPerPage: 10, totalPages: 1, totalItems: rows.length } })
+const teamRoles = [
+  { key: 'tenant_owner', name: 'Owner', requiresBranch: false },
+  { key: 'tenant_manager', name: 'Manager', requiresBranch: false },
+  { key: 'branch_staff', name: 'Branch staff', requiresBranch: true },
+  { key: 'rider', name: 'Rider', requiresBranch: true },
+]
+const teamMembers = Array.from({ length: 10 }, (_, i) => ({ id: i === 0 ? 'user-1' : `member-${i}`, name: i === 0 ? 'Owner' : `Member ${i}`, email: `person${i}@example.test`, role: i === 0 ? 'tenant_owner' : 'branch_staff', roleName: i === 0 ? 'Owner' : 'Branch staff', branch: i === 0 ? null : { id: branch.id, name: branch.name }, isActive: true, isLocked: i === 1, activeSessions: 2, permissions: ['orders:view'], lastLoginAt: null, lockedUntil: '2026-11-25T08:00:00Z', recentActivity: [{ id: 'activity-1', action: 'auth.login', createdAt: '2026-11-23T08:00:00Z' }] }))
+let teamInvites = [{ id: 'invite-1', email: 'expired@example.test', name: null, role: 'rider', roleName: 'Rider', branch: { id: branch.id, name: branch.name }, invitedBy: { type: 'staff', name: 'Private staff name' }, expiresAt: '2026-01-01T00:00:00Z', expired: true }]
+let failInvite = 0
+const paymentSettings = { cod: { enabled: false, note: null }, card: { enabled: false, provider: 'stripe', configured: false, publishableKey: null, secretKeyHint: null, mode: null, accountId: null, verifiedAt: null, ready: false }, usable: false, confirmedAt: null }
+let paymentFailure = null
+let stripeTestOk = true
 const backend = httpServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
   res.setHeader('Access-Control-Allow-Credentials', 'true')
@@ -47,14 +67,47 @@ const backend = httpServer(async (req, res) => {
   requests.push({ method: req.method, path, params: Object.fromEntries(url.searchParams), body })
   const send = (data, status = 200, extra = {}) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: status < 400, message: status === 403 ? 'You are not assigned to a branch yet. Ask your manager.' : status === 409 ? 'Order changed.' : 'OK', data, ...extra })) }
   try {
-    if (path === 'auth/login') { if (body.password === 'invalid-password') return send({}, 422, { message: 'Check your password.', error: [{ path: 'password', message: 'Check your password.' }] }); signedIn = true; role = body.email.startsWith('branch') ? 'branch_staff' : 'tenant_owner'; return send({ accessToken: 'test-token' }) }
+    if (skeletonCheck && (req.method === 'GET' || path === 'auth/refresh')) await sleep(900)
+    if (path === 'auth/login') { if (body.password === 'invalid-password') return send({}, 422, { message: 'Check your password.', error: [{ path: 'password', message: 'Check your password.' }] }); signedIn = true; role = body.email.startsWith('branch') ? 'branch_staff' : body.email.startsWith('manager') ? 'tenant_manager' : body.email.startsWith('viewer') ? 'viewer' : 'tenant_owner'; return send({ accessToken: 'test-token' }) }
     if (path === 'auth/refresh') return send({ accessToken: 'test-token' }, signedIn ? 200 : 401)
     assert.equal(req.headers.authorization, 'Bearer test-token', `${path} must be authenticated`)
     if (path === 'auth/logout') { signedIn = false; return send({}) }
-    if (path === 'me') return send({ id: 'user-1', name: designCheck ? 'Ross Bakers' : 'Owner', role, roleName: role === 'branch_staff' ? 'Branch Staff' : designCheck ? 'Owner account' : 'Owner', permissions: role === 'branch_staff' ? ['orders:view', 'orders:manage'] : ['*'], tenant: { name: designCheck ? 'Ross Bakers Co' : 'Test Bakery' }, branch: role === 'branch_staff' ? { id: branch.id, name: branch.name } : null })
+    if (commerceCheck && commerceFixture.handle({ path, method: req.method, body, send, role, url, raw, headers: req.headers })) return
+    if (path === 'me') return send({ id: 'user-1', name: designCheck ? 'Ross Bakers' : 'Owner', role, roleName: role === 'branch_staff' ? 'Branch Staff' : designCheck ? 'Owner account' : 'Owner', permissions: role === 'branch_staff' ? ['orders:view', 'orders:manage'] : role === 'viewer' ? ['team:view'] : ['*'], tenant: { name: designCheck ? 'Ross Bakers Co' : 'Test Bakery', status: paymentsCheck ? 'live' : 'onboarding' }, branch: role === 'branch_staff' ? { id: branch.id, name: branch.name } : null })
     if (role === 'branch_staff' && !path.startsWith('orders')) throw new Error(`Branch staff requested forbidden area: ${path}`)
     if (path === 'branding') return send({ currencySymbol: designCheck ? '$' : 'Rs' })
     if (path === 'plan') return send({ usage: { branches: { used: branches.filter((item) => item.isActive).length, limit: branchesCheck ? 10 : 3 } } })
+    if (paymentsCheck && path.startsWith('payments')) {
+      assert.equal(role, 'tenant_owner', 'Payment endpoints are owner-only')
+      if (paymentFailure?.method === req.method) { const failure = paymentFailure; if (!failure.persist) paymentFailure = null; return send({}, failure.status, { message: failure.message, ...(failure.field ? { error: [{ path: failure.field, message: failure.message }] } : {}) }) }
+      const recompute = () => { paymentSettings.usable = paymentSettings.cod.enabled || (paymentSettings.card.enabled && paymentSettings.card.ready) }
+      const invalid = (field, message) => send({}, 422, { message: 'Check the fields.', error: [{ path: field, message }] })
+      if (path === 'payments' && req.method === 'PATCH') {
+        if (!(body.codEnabled ?? paymentSettings.cod.enabled) && !(body.cardEnabled ?? paymentSettings.card.enabled)) return invalid('codEnabled', 'Keep at least one way to pay switched on')
+        if (body.cardEnabled && !paymentSettings.card.ready) return invalid('cardEnabled', 'Save working Stripe keys first')
+        assert.ok(Object.keys(body).every((key) => ['codEnabled', 'codNote', 'cardEnabled'].includes(key)))
+        if ('codEnabled' in body) paymentSettings.cod.enabled = body.codEnabled
+        if ('codNote' in body) paymentSettings.cod.note = body.codNote
+        if ('cardEnabled' in body) paymentSettings.card.enabled = body.cardEnabled
+        paymentSettings.confirmedAt = '2026-11-24T08:00:00Z'
+      }
+      if (path === 'payments/stripe-keys' && req.method === 'PUT') {
+        assert.ok(body.publishableKey.startsWith('pk_')); assert.ok(body.secretKey.startsWith('sk_'))
+        Object.assign(paymentSettings.card, { enabled: false, configured: true, publishableKey: body.publishableKey, secretKeyHint: 'sk_test_••••1234', mode: body.publishableKey.startsWith('pk_test') ? 'test' : 'live', accountId: 'acct_fixture', verifiedAt: '2026-11-24T08:00:00Z', ready: true })
+      }
+      if (path === 'payments/stripe-keys' && req.method === 'DELETE') {
+        if (paymentSettings.card.enabled && !paymentSettings.cod.enabled) return invalid('codEnabled', 'Turn cash on first')
+        Object.assign(paymentSettings.card, { enabled: false, configured: false, publishableKey: null, secretKeyHint: null, mode: null, accountId: null, verifiedAt: null, ready: false })
+      }
+      if (path === 'payments/stripe-keys/test') {
+        assert.equal(raw.length, 0, 'Testing the saved key has no request body')
+        paymentSettings.card.ready = stripeTestOk
+        if (!stripeTestOk) paymentSettings.card.enabled = false
+        recompute()
+        return send({ ok: stripeTestOk, message: stripeTestOk ? 'Key accepted' : 'Key rejected', payments: paymentSettings })
+      }
+      recompute(); return send(paymentSettings)
+    }
     const filtered = (rows) => rows.filter((item) => !url.searchParams.get('status') || url.searchParams.get('status') === 'all' || item.isActive === (url.searchParams.get('status') === 'active'))
     if (path === 'menu/categories') { if (req.method === 'GET') return send(filtered(categories)); const item = { id: `cat-${categories.length + 1}`, ...body, isActive: true, productCount: 0 }; categories.push(item); return send(item, 201) }
     if (path === 'menu/categories/order') return send(categories)
@@ -88,6 +141,28 @@ const backend = httpServer(async (req, res) => {
       else if (req.method === 'DELETE') item.isActive = false
       item.status = !item.isActive ? 'inactive' : item.isAcceptingOrders ? 'open' : 'paused'
       return send(item)
+    }
+    if (teamCheck && path.startsWith('team')) {
+      if (path === 'team/roles') return send(teamRoles.map((item) => ({ ...item, assignable: role === 'tenant_owner' || item.key !== 'tenant_owner' })))
+      if (path === 'team/invites') {
+        if (req.method === 'GET') return send(teamInvites)
+        if (failInvite) { const status = failInvite; failInvite = 0; return send({}, status, { message: status === 503 ? 'Email could not be sent. Try again.' : 'Check the fields.', ...(status === 422 ? { error: [{ path: 'email', message: 'This address is already on your team.' }] } : {}) }) }
+        assert.ok(!body.role.includes('staff') || body.branchId)
+        teamInvites = teamInvites.filter((item) => item.email !== body.email)
+        teamInvites.push({ ...body, id: `invite-${Date.now()}`, roleName: teamRoles.find((item) => item.key === body.role).name, branch: body.branchId ? { id: branch.id, name: branch.name } : null, invitedBy: { type: 'user', name: 'Owner' }, expiresAt: '2027-01-01T00:00:00Z', expired: false })
+        return send({}, 201)
+      }
+      if (path.startsWith('team/invites/')) { teamInvites = teamInvites.filter((item) => item.id !== path.split('/')[2]); return send({}) }
+      if (path === 'team') {
+        const rows = filtered(teamMembers).filter((item) => (!url.searchParams.get('q') || `${item.name} ${item.email}`.includes(url.searchParams.get('q'))) && (!url.searchParams.get('role') || item.role === url.searchParams.get('role')) && (!url.searchParams.get('branchId') || item.branch?.id === url.searchParams.get('branchId')))
+        const page = Number(url.searchParams.get('page') || 1); const size = Number(url.searchParams.get('limit') || 8)
+        return send(rows.slice((page - 1) * size, page * size), 200, { pagination: { currentPage: page, itemsPerPage: size, totalItems: rows.length, totalPages: Math.ceil(rows.length / size) } })
+      }
+      const member = teamMembers.find((item) => item.id === path.split('/')[1]); assert.ok(member)
+      if (req.method === 'PATCH') { Object.assign(member, body); if (body.role) { member.roleName = teamRoles.find((item) => item.key === body.role).name; member.branch = body.branchId ? { id: body.branchId, name: branch.name } : null } }
+      if (path.endsWith('/unlock')) member.isLocked = false
+      if (path.endsWith('/revoke-sessions') || body.isActive === false) member.activeSessions = 0
+      return send(member)
     }
     if (path === 'team') return send(branchesCheck ? [{ id: 'staff-1', name: 'Ali', email: 'ali@example.test' }] : [{ id: 'rider-1', name: 'Ali' }], 200, { pagination: paged([{}]).pagination })
     if (path === 'orders/summary') return send({ placed: order.status === 'placed' ? 1 : 0, accepted: 0, preparing: 0, ready: 0, out_for_delivery: 0, active: next[order.status].length ? 1 : 0, refundsNeeded: order.paymentStatus === 'refund_failed' ? 1 : 0 })
@@ -152,6 +227,7 @@ try {
   const awaitRequest = async (method, path) => { for (let i = 0; i < 100; i++) { const found = requests.findLast((request) => request.method === method && request.path === path); if (found) return found; await sleep(50) } throw new Error(`No request: ${method} ${path}`) }
   const capture = async (name) => {
     await evaluate('document.fonts.ready.then(()=>true)')
+    await evaluate('Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{}))).then(()=>true)')
     await wait('[...document.images].every(image => image.complete)')
     assert.deepEqual(await evaluate('[...document.images].filter(image => image.getClientRects().length && !image.naturalWidth).map(image=>image.src)'), [], `Images must load: ${name}`)
     const geometry = await evaluate(`Promise.all([...document.querySelectorAll('img.design-icon')].filter(image=>image.getClientRects().length).map(async image=>{const response=await fetch(image.src);const svg=new DOMParser().parseFromString(await response.text(),'image/svg+xml').documentElement;const rect=image.getBoundingClientRect();return {file:image.src.split('/').pop(),width:rect.width,height:rect.height,expectedWidth:Number(svg.getAttribute('width')),expectedHeight:Number(svg.getAttribute('height'))}}))`)
@@ -170,6 +246,7 @@ try {
     await evaluate(`localStorage.setItem('bake-my-app:onboarding:v1', JSON.stringify({ launched: false }))`)
   }
   await cdp('Page.navigate', { url: `${origin}/` })
+  if (skeletonCheck) { await wait('!!document.querySelector(".skeleton-view-session")'); await capture('loading-session') }
   console.log(process.argv.includes('--login-only') ? 'Checking sign-in…' : 'Checking sign-in and Menu…')
   await wait(text('Welcome back'))
   if (process.argv.includes('--login-only')) {
@@ -205,6 +282,138 @@ try {
     assert.deepEqual(failures, []); assert.deepEqual(browserErrors, [])
     console.log('PASS Sign-in: root/legacy routes, Figma asset geometry, purple palette, desktop/mobile layout, password visibility, validation errors and API sign-in')
     console.log('Screenshots: artifacts/login-desktop.png and artifacts/login-mobile.png')
+    return
+  }
+  if (skeletonCheck) { await runSkeletonChecks({ click, fill, wait, text, evaluate, cdp, capture, failures, browserErrors }); return }
+  if (commerceCheck) { await runCommerceChecks({ click, fill, wait, text, evaluate, cdp, capture, awaitRequest, requests, failures, browserErrors, fixture: commerceFixture }); return }
+  if (paymentsCheck) {
+    const switchState = (label) => evaluate(`document.querySelector('[role=switch][aria-label="${label}"]').getAttribute('aria-checked')`)
+    const signOut = async () => { await evaluate(`document.querySelector('#dashboard-sidebar > div.relative > button').click()`); await click('Sign out'); await wait(text('Welcome back')) }
+    const signIn = async (email) => { await fill('email', email); await fill('password', 'long-test-password'); await click('Sign in'); await wait('!!document.querySelector("#dashboard-sidebar")') }
+    await signIn('owner@example.test')
+    paymentFailure = { method: 'GET', status: 503, message: 'Payment settings are unavailable. Try again.', persist: true }
+    await click('Payments', 'nav button'); await wait(text('Payment settings are unavailable. Try again.')); paymentFailure = null; await click('Try again')
+    await wait(text('Set up a way for customers to pay'))
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Enable card payments"]').disabled`), true)
+    await click('Save payment preferences'); await wait(text('Keep at least one way to pay switched on'))
+    await click('Enable cash on delivery'); await fill('codNote', 'Please have exact change ready')
+    assert.equal(await evaluate(`[...document.querySelectorAll('button')].find(e=>e.textContent==='Connect Stripe').disabled`), true)
+    await click('Save payment preferences'); await wait(text('Payment preferences saved.'))
+    assert.deepEqual((await awaitRequest('PATCH', 'payments')).body, { codEnabled: true, codNote: 'Please have exact change ready' })
+    await fill('codNote', ''); await click('Save payment preferences'); await wait(text('Payment preferences saved.'))
+    assert.deepEqual((await awaitRequest('PATCH', 'payments')).body, { codNote: null })
+    await click('Save payment preferences'); await wait(text('Payment preferences saved.')); assert.deepEqual((await awaitRequest('PATCH', 'payments')).body, {})
+    await capture('payments-unconfigured-desktop')
+    await click('Connect Stripe'); await fill('publishableKey', 'pk_test_fixture'); await fill('secretKey', 'sk_live_fixture')
+    const beforeMismatch = requests.filter((request) => request.method === 'PUT').length
+    await click('Save Stripe keys'); await wait(text('Both keys must use the same mode'))
+    assert.equal(requests.filter((request) => request.method === 'PUT').length, beforeMismatch)
+    await fill('secretKey', 'sk_test_fixture_private')
+    paymentFailure = { method: 'PUT', status: 422, field: 'secretKey', message: 'Stripe did not accept this key.' }
+    await click('Save Stripe keys'); await wait(text('Stripe did not accept this key.'))
+    assert.equal(await evaluate('document.querySelector("input[name=secretKey]").getAttribute("aria-invalid")'), 'true')
+    assert.equal(await evaluate('document.querySelector("input[name=secretKey]").type'), 'password')
+    paymentFailure = { method: 'PUT', status: 503, message: 'Card payments cannot be saved right now' }
+    await click('Save Stripe keys'); await wait(text('Contact Bake My App to enable secure key storage'))
+    paymentFailure = { method: 'PUT', status: 503, message: 'Stripe could not be reached. Try again.' }
+    await click('Save Stripe keys'); await wait(text('Stripe could not be reached. Try again.'))
+    paymentFailure = { method: 'PUT', status: 429, message: 'Too many tries. Wait before trying again.' }
+    await click('Save Stripe keys'); await wait(text('Too many tries. Wait before trying again.'))
+    const afterRateLimit = requests.filter((request) => request.method === 'PUT').length; await sleep(200)
+    assert.equal(requests.filter((request) => request.method === 'PUT').length, afterRateLimit)
+    await click('Save Stripe keys'); await wait('!document.querySelector("[role=dialog]")'); await wait(text('Key verified'))
+    assert.equal(await switchState('Enable card payments'), 'false')
+    assert.ok(await evaluate(text('Your bakery is live. Test mode: no real money is taken.')))
+    assert.equal(await evaluate('document.body.innerText.includes("sk_test_fixture_private")'), false)
+    assert.equal(await evaluate('JSON.stringify({...localStorage}).includes("sk_test_fixture_private") || location.href.includes("sk_test_fixture_private")'), false)
+    await click('Replace keys'); assert.equal(await evaluate('document.querySelector("input[name=secretKey]").value'), ''); await closeModal()
+    await click('Enable card payments'); await click('Save payment preferences'); await wait(text('Payment preferences saved.'))
+    assert.deepEqual((await awaitRequest('PATCH', 'payments')).body, { cardEnabled: true })
+    await capture('payments-configured-desktop')
+    await click('Test saved key'); await wait(text('Stripe accepted your saved key.'))
+    assert.equal(await switchState('Enable card payments'), 'true')
+    stripeTestOk = false; await click('Test saved key'); await wait(text('Stripe no longer accepts your key. Cards are off. Save a working key.'))
+    assert.equal(await switchState('Enable card payments'), 'false')
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Enable card payments"]').disabled`), true)
+    await click('Replace keys'); await fill('publishableKey', 'pk_live_fixture'); await fill('secretKey', 'sk_live_fixture_private'); await click('Save Stripe keys'); await wait('!document.querySelector("[role=dialog]")')
+    assert.equal(await evaluate(text('Test mode: no real money is taken.')), false)
+    await click('Enable card payments'); await click('Enable cash on delivery'); await click('Save payment preferences'); await wait(text('Payment preferences saved.'))
+    await click('Remove keys'); await wait(text('Cards are your only payment method.'))
+    assert.equal(await evaluate(`[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent==='Confirm removal').disabled`), true)
+    await click('Keep keys'); await click('Enable cash on delivery'); await click('Save payment preferences'); await wait(text('Payment preferences saved.'))
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await capture('payments-mobile')
+    await click('Replace keys'); await capture('payments-keys-mobile'); await closeModal()
+    await click('Remove keys'); await capture('payments-remove-mobile')
+    paymentFailure = { method: 'DELETE', status: 422, field: 'codEnabled', message: 'Turn cash on first' }
+    await click('Confirm removal'); await wait(text('Turn cash on first')); assert.equal(paymentSettings.card.configured, true)
+    await click('Confirm removal'); await wait('!document.querySelector("[role=dialog]")'); await wait(text('Stripe keys removed. Card payments are off.'))
+    assert.equal(await switchState('Enable card payments'), 'false'); assert.equal(paymentSettings.cod.enabled, true)
+    await click('Refresh settings'); await wait(text('Payment settings refreshed.'))
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+    await signOut(); const managerStart = requests.length; await signIn('manager@example.test')
+    assert.equal(await evaluate(`[...document.querySelectorAll('nav button')].some(e=>e.textContent.trim()==='Payments')`), false)
+    assert.equal(requests.slice(managerStart).some((request) => request.path.startsWith('payments')), false)
+    await signOut(); const branchStart = requests.length; await signIn('branch@example.test')
+    assert.equal(await evaluate(`[...document.querySelectorAll('nav button')].some(e=>e.textContent.trim()==='Payments')`), false)
+    assert.equal(requests.slice(branchStart).some((request) => request.path.startsWith('payments')), false)
+    assert.equal(requests.some((request) => request.path.startsWith('deliveries')), false)
+    assert.deepEqual(failures, []); assert.deepEqual(browserErrors, [])
+    for (const operation of ['GET payments', 'PATCH payments', 'PUT payments/stripe-keys', 'POST payments/stripe-keys/test', 'DELETE payments/stripe-keys']) assert.ok(requests.some((request) => `${request.method} ${request.path}` === operation), operation)
+    console.log('PASS Payments: all five operations, setup confirmation, changed-field PATCH, owner access, key validation/replacement/clearing, 422/429/503 recovery, failed test disables cards, removal guard and refund warning, desktop/mobile layouts; no rider endpoints')
+    return
+  }
+  if (teamCheck) {
+    const select = async (name, value) => { await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(`select[name="${name}"]`)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}));})()`); await sleep(50) }
+    const signOut = async () => { await evaluate(`document.querySelector('#dashboard-sidebar > div.relative > button').click()`); await click('Sign out'); await wait(text('Welcome back')) }
+    const signIn = async (email) => { await fill('email', email); await fill('password', 'long-test-password'); await click('Sign in'); await wait('!!document.querySelector("#dashboard-sidebar")') }
+    await signIn('owner@example.test'); await click('Team', 'nav button'); await wait(text('Member 1'))
+    await capture('team-desktop')
+    await click('Next'); await wait(text('Member 9')); assert.equal((await awaitRequest('GET', 'team')).params.page, '2')
+    await evaluate(`(()=>{const controls=document.querySelectorAll('.team-filters select');['branch_staff','branch-1','active'].forEach((value,i)=>{controls[i].value=value;controls[i].dispatchEvent(new Event('change',{bubbles:true}));});})()`)
+    await wait(`document.querySelectorAll('.team-table tbody tr').length===8 && !document.body.innerText.includes('Loading team members')`)
+    const filteredTeam = (await awaitRequest('GET', 'team')).params
+    assert.equal(filteredTeam.role, 'branch_staff'); assert.equal(filteredTeam.branchId, branch.id); assert.equal(filteredTeam.status, 'active'); assert.equal(filteredTeam.page, '1')
+    await evaluate(`document.querySelectorAll('.team-filters select').forEach(e=>{e.value='';e.dispatchEvent(new Event('change',{bubbles:true}));})`)
+    await evaluate(`(()=>{const e=document.querySelector('[aria-label="Search team"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'Member 1');e.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+    await wait(`document.querySelectorAll('.team-table tbody tr').length===1`)
+    assert.equal((await awaitRequest('GET', 'team')).params.q, 'Member 1'); assert.equal((await awaitRequest('GET', 'team')).params.page, '1')
+    await click('View Member 1'); await wait(text('Signed in on 2 devices')); await wait(text('auth.login'))
+    await click('Unlock account'); await click('Unlock account'); await wait('!document.body.innerText.includes("Locked until")')
+    assert.equal(teamMembers[1].isLocked, false)
+    await click('Edit member'); await fill('name', 'Ali Updated'); await select('role', 'rider'); await click('Save changes'); await wait(text('Ali Updated'))
+    assert.deepEqual((await awaitRequest('PATCH', 'team/member-1')).body, { name: 'Ali Updated', role: 'rider', branchId: branch.id })
+    await click('Switch off'); assert.equal(teamMembers[1].isActive, true); await click('Switch off'); await wait(`document.querySelector('.team-detail dl')?.textContent.includes('Switched off')`); assert.equal(teamMembers[1].isActive, false)
+    await click('Switch on'); await click('Switch on'); await wait(`document.querySelector('.team-detail dl')?.textContent.includes('StatusActive')`); assert.equal(teamMembers[1].isActive, true)
+    await click('Sign out everywhere'); await click('Sign out everywhere'); await wait(text('Signed in on 0 devices')); await closeModal()
+    await click('Invite team member'); await fill('email', 'new@example.test'); await select('role', 'branch_staff')
+    assert.equal(await evaluate('document.querySelector("select[name=branchId]").required'), true)
+    await select('branchId', branch.id); failInvite = 422; await click('Send invitation'); await wait(text('This address is already on your team.'))
+    assert.equal(await evaluate('document.querySelector("input[name=email]").getAttribute("aria-invalid")'), 'true')
+    failInvite = 503; await click('Send invitation'); await wait(text('Email could not be sent. Try again.'))
+    await click('Send invitation'); await wait('!document.querySelector("[role=dialog]")'); await click('Pending invitations')
+    await wait(text('new@example.test')); assert.equal(await evaluate(text('Private staff name')), false); assert.ok(await evaluate(text('Bake My App team')))
+    await evaluate(`document.querySelector('.team-invites article button').click()`); await wait(text('Resend invitation')); await click('Resend invitation'); await wait('!document.querySelector("[role=dialog]")')
+    assert.equal((await awaitRequest('POST', 'team/invites')).body.email, 'expired@example.test')
+    await capture('team-invites-desktop')
+    await evaluate(`document.querySelector('.team-invites article button:last-child').click()`); await click('Cancel invitation', '[role=dialog] button'); await wait('!document.querySelector("[role=dialog]")')
+    assert.equal(teamInvites.length, 1)
+    await click('Team members'); await evaluate(`(()=>{const e=document.querySelector('[aria-label="Search team"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'');e.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+    await wait(text('Owner (you)')); await click('View Owner'); await wait(text('Edit member'))
+    assert.equal(await evaluate(`[...document.querySelectorAll('[role=dialog] button')].some(e=>e.textContent.trim()==='Switch off')`), false)
+    await click('Edit member'); assert.equal(await evaluate('!!document.querySelector("select[name=role]")'), false); await closeModal(); await closeModal()
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await capture('team-mobile')
+    await click('Invite team member'); await capture('team-invite-mobile'); await closeModal()
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+    await signOut(); await signIn('manager@example.test'); await click('Team', 'nav button'); await click('View Owner'); await wait(text('Team member details')); await wait(text('orders:view'))
+    assert.equal(await evaluate(`[...document.querySelectorAll('[role=dialog] button')].some(e=>e.textContent.trim()==='Edit member')`), false); await closeModal()
+    await click('Invite team member'); assert.equal(await evaluate('document.querySelector("[role=dialog] option[value=tenant_owner]").disabled'), true); await closeModal()
+    await signOut(); await signIn('viewer@example.test'); await wait(text('Team Directory'))
+    assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='Invite team member')`), false)
+    await click('View Ali Updated'); await wait(text('orders:view')); assert.equal(await evaluate(`[...document.querySelectorAll('[role=dialog] button')].some(e=>e.textContent.trim()==='Edit member')`), false)
+    assert.deepEqual(failures, []); assert.deepEqual(browserErrors, [])
+    const operations = new Set(requests.filter((request) => request.path.startsWith('team')).map((request) => `${request.method} ${request.path.replace(/member-\d+/, ':id').replace(/invites\/invite-[^/]+/, 'invites/:id')}`))
+    for (const operation of ['GET team', 'GET team/roles', 'GET team/invites', 'POST team/invites', 'DELETE team/invites/:id', 'GET team/:id', 'PATCH team/:id', 'POST team/:id/unlock', 'POST team/:id/revoke-sessions']) assert.ok(operations.has(operation), operation)
+    console.log('PASS Team: all nine API operations, server pagination/search, branch role edits, confirmation, unlock/session revocation, invitation resend/cancel, 422 and 503 recovery, owner/self/view-only restrictions, desktop/mobile screenshots')
     return
   }
   if (branchesCheck) {

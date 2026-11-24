@@ -5,8 +5,8 @@ import {
   MenuRestaurantIcon,
   Store03Icon,
   ShoppingBasket03Icon,
+  CreditCardIcon,
   UserGroup02Icon,
-  MarketingIcon,
   AnalyticsUpIcon,
   Setting07Icon,
   ArrowRight02Icon,
@@ -26,16 +26,20 @@ import chocolateCroissantImg from '../assets/products/chocolate-croissant.webp'
 import { BranchesView } from './branches/BranchesView'
 import { MenuView } from './menu/MenuView'
 import { CustomersView } from './customers/CustomersView'
-import { PromotionsView } from './promotions/PromotionsView'
+import { TeamView } from './team/TeamView'
+import { PaymentsView } from './payments/PaymentsView'
+import { canManagePayments } from './payments/paymentHelpers'
+import { PricingView } from './pricing/PricingView'
 import { AnalyticsView } from './analytics/AnalyticsView'
 import { SettingsView } from './settings/SettingsView'
 import { OrdersView } from './orders/OrdersView'
 import { useTenant } from '../lib/TenantContext'
 import { can } from '../lib/tenant'
+import { readableTextOn } from '../lib/color'
 import { DesignIcon } from './shared/CatalogUI'
 
 const TIME_RANGES = ['Today', '7d', '30d', '6mo', '1y']
-const DESIGN_NAV_ICONS = { overview: 'bc1b9', menu: '4b588', branches: 'b33e1', orders: '5fa5c', customers: '29069', promo: '7cd30', analytics: 'fc6bd', settings: '4dac1' }
+const DESIGN_NAV_ICONS = { overview: 'bc1b9', menu: '4b588', branches: 'b33e1', orders: '5fa5c', customers: '29069', team: '29069', payments: '4dac1', pricing: '7cd30', analytics: 'fc6bd', settings: '4dac1' }
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: DashboardCircleIcon },
@@ -43,15 +47,24 @@ const NAV_ITEMS = [
   { id: 'branches', label: 'Branches', icon: Store03Icon },
   { id: 'orders', label: 'Orders', icon: ShoppingBasket03Icon },
   { id: 'customers', label: 'Customers', icon: UserGroup02Icon },
-  { id: 'promo', label: 'Promo & Discounts', icon: MarketingIcon },
+  { id: 'team', label: 'Team', icon: UserGroup02Icon },
+  { id: 'payments', label: 'Payments', icon: CreditCardIcon },
+  { id: 'pricing', label: 'Pricing', icon: DiscountIcon },
   { id: 'analytics', label: 'Analytics', icon: AnalyticsUpIcon },
   { id: 'settings', label: 'Settings', icon: Setting07Icon },
 ]
 
+function ProfileAvatar({ src, name }) {
+  const [failedSrc, setFailedSrc] = useState(null)
+  return <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#f0ece9] text-xs font-semibold" aria-label={name}>
+    {failedSrc === src ? name?.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('') : <img src={src} alt="" onError={() => setFailedSrc(src)} className="size-full object-cover" />}
+  </div>
+}
+
 /** `className` sizes the screen: the full viewport by default, `h-full` inside a demo frame. */
-export function DashboardScreen({ state, actions, className = 'h-screen', sidebarLogo }) {
-  const { user, logout } = useTenant()
-  const [activeNav, setActiveNav] = useState(user.role === 'branch_staff' ? 'orders' : can(user, 'menu:view') ? 'menu' : can(user, 'branches:view') ? 'branches' : 'orders')
+export function DashboardScreen({ state, className = 'h-screen', sidebarLogo }) {
+  const { user, branding, logout } = useTenant()
+  const [activeNav, setActiveNav] = useState(user.role === 'branch_staff' ? 'orders' : can(user, 'menu:view') ? 'menu' : can(user, 'branches:view') ? 'branches' : can(user, 'team:view') ? 'team' : canManagePayments(user) ? 'payments' : 'orders')
   const [orderBranchId, setOrderBranchId] = useState('')
   const [activeTimeRange, setActiveTimeRange] = useState('7d')
   const [showUserMenu, setShowUserMenu] = useState(false)
@@ -62,7 +75,9 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
   const shopTagline = state.shop?.tagline?.trim() || 'Freshly baked goods'
   const ownerName = user.name
   const visibleNav = NAV_ITEMS.filter((item) => {
-    const permission = { menu: 'menu:view', branches: 'branches:view', orders: 'orders:view' }[item.id]
+    if (item.id === 'payments') return canManagePayments(user)
+    if (item.id === 'pricing') return canManagePayments(user) || (['tenant_owner', 'tenant_manager'].includes(user.role) && can(user, 'menu:view'))
+    const permission = { menu: 'menu:view', branches: 'branches:view', orders: 'orders:view', team: 'team:view' }[item.id]
     return permission ? can(user, permission) : user.role === 'tenant_owner' || user.role === 'tenant_manager'
   })
 
@@ -134,7 +149,7 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
   }
 
   return (
-    <div className={`brand-scope relative flex w-full overflow-hidden bg-[#f5f5f5] font-sans text-ink max-lg:flex-col ${className}`}>
+    <div style={/^#[0-9a-f]{6}$/i.test(branding?.primary || '') ? { '--brand': branding.primary, '--brand-light': `color-mix(in oklab, ${branding.primary} 10%, white)`, '--on-brand': readableTextOn(branding.primary) } : undefined} className={`brand-scope relative flex w-full overflow-hidden bg-[#f5f5f5] font-sans text-ink max-lg:flex-col ${className}`}>
       {/* Phones and tablets: a top bar whose menu button slides the sidebar in as a drawer. */}
       <header className="flex shrink-0 items-center gap-3 border-b border-[#f0ece9] bg-white px-4 py-3 lg:hidden max-sm:justify-between max-sm:border-0 max-sm:bg-transparent max-sm:pt-1 max-sm:pb-0">
         <button
@@ -149,9 +164,7 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
         </button>
         <p className={`min-w-0 flex-1 truncate text-base font-semibold text-ink ${sidebarLogo ? 'max-sm:hidden' : ''}`}>{activeLabel}</p>
         {sidebarLogo && <div className="h-[37.944px] w-[52.08px] shrink-0 sm:hidden [&>*]:!size-full">{sidebarLogo}</div>}
-        <div className="flex size-9 shrink-0 overflow-hidden rounded-full bg-[#f0ece9]">
-          <img src={state.shop?.logo || (catalogDesign ? '/figma/catalog/80d35.png' : userAvatarImg)} alt="" className="size-full object-cover" />
-        </div>
+        <ProfileAvatar src={state.shop?.logo || (catalogDesign ? '/figma/catalog/80d35.png' : userAvatarImg)} name={ownerName} />
       </header>
 
       {navOpen && (
@@ -222,7 +235,7 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
                       : 'text-body hover:bg-[#f5f5f5] font-normal'
                   }`}
                 >
-                  {catalogDesign ? <DesignIcon folder={isActive && item.id === 'branches' ? 'branches' : 'catalog'} file={isActive ? { menu: 'b16db', orders: '7b7cb', branches: '0eeb5' }[item.id] : DESIGN_NAV_ICONS[item.id]} /> : <HugeiconsIcon
+                  {catalogDesign && item.id !== 'payments' ? <DesignIcon folder={isActive && item.id === 'branches' ? 'branches' : 'catalog'} file={isActive ? { menu: 'b16db', orders: '7b7cb', branches: '0eeb5' }[item.id] : DESIGN_NAV_ICONS[item.id]} /> : <HugeiconsIcon
                     icon={Icon}
                     size={20}
                     color={isActive ? 'var(--brand)' : 'currentColor'}
@@ -243,13 +256,7 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
             onClick={() => setShowUserMenu(!showUserMenu)}
             className={`flex w-full items-center gap-3 rounded-xl ${catalogDesign ? '' : 'p-1.5'} text-left transition-colors hover:bg-[#f5f5f5]`}
           >
-            <div className="size-9 shrink-0 overflow-hidden rounded-full bg-[#f0ece9]">
-              <img
-                src={state.shop?.logo || (catalogDesign ? '/figma/catalog/80d35.png' : userAvatarImg)}
-                alt=""
-                className="size-full object-cover"
-              />
-            </div>
+            <ProfileAvatar src={state.shop?.logo || (catalogDesign ? '/figma/catalog/80d35.png' : userAvatarImg)} name={ownerName} />
             <div className="flex min-w-0 flex-1 flex-col leading-tight">
               <p className="truncate text-sm font-semibold text-ink">{ownerName}</p>
               <p className="text-xs text-brand font-normal">{user.roleName}{user.branch?.name ? ` · ${user.branch.name}` : ''}</p>
@@ -283,15 +290,19 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
         {activeNav === 'orders' ? (
           <OrdersView key={orderBranchId} initialBranchId={orderBranchId} />
         ) : activeNav === 'settings' ? (
-          <SettingsView state={state} actions={actions} onNavigate={setActiveNav} />
+          <SettingsView />
         ) : activeNav === 'menu' ? (
           <MenuView />
         ) : activeNav === 'branches' ? (
           <BranchesView onNavigateToOrders={(branchId) => { setOrderBranchId(branchId); setActiveNav('orders') }} />
         ) : activeNav === 'customers' ? (
           <CustomersView />
-        ) : activeNav === 'promo' ? (
-          <PromotionsView />
+        ) : activeNav === 'team' ? (
+          <TeamView />
+        ) : activeNav === 'payments' ? (
+          <PaymentsView />
+        ) : activeNav === 'pricing' ? (
+          <PricingView />
         ) : activeNav === 'analytics' ? (
           <AnalyticsView />
         ) : activeNav === 'overview' ? (
@@ -635,14 +646,14 @@ export function DashboardScreen({ state, actions, className = 'h-screen', sideba
                 {/* Tile 4: Create Promotion / Offer */}
                 <button
                   type="button"
-                  onClick={() => setActiveNav('promo')}
+                  onClick={() => setActiveNav('pricing')}
                   className="flex flex-col items-center gap-3.5 rounded-xl border border-[#dcdcdc] p-4 text-center shadow-[0px_4px_20px_0px_rgba(0,0,0,0.02)] transition-all hover:border-[#39ab00] hover:shadow-md cursor-pointer group"
                 >
                   <div className="flex size-10 items-center justify-center rounded bg-[#effce8] text-[#39ab00] group-hover:scale-105 transition-transform">
                     <HugeiconsIcon icon={DiscountIcon} size={20} color="currentColor" />
                   </div>
                   <span className="text-sm font-medium leading-snug text-ink">
-                    Create a promotion / offer
+                    Manage pricing & offers
                   </span>
                 </button>
               </div>

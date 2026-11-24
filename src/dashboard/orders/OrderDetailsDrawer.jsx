@@ -1,3 +1,4 @@
+import { Skeleton } from '../shared/Skeleton'
 import { useEffect, useRef } from 'react'
 import { dateTime, money, tenant } from '../../lib/tenant'
 import { useRemote } from '../../lib/useRemote'
@@ -31,7 +32,7 @@ export function OrderDetailsDrawer({ id, revision, onClose, renderActions }) {
   const currentIndex = visibleStages.findIndex(([status]) => status === order?.status)
   return <div className="order-panel-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}><aside ref={ref} role="dialog" aria-modal="true" aria-label="Order details" className="order-detail-panel">
     <header><div><h2>Order {order ? `#${order.number}` : ''}</h2>{order && <p>Received at {clock(order.placedAt)}</p>}</div><button aria-label="Close order details" onClick={onClose}><DesignIcon file={order?.status === 'completed' ? '9f539' : 'dcdbe'} /></button></header>
-    <ErrorMessage error={detail.error} />{detail.loading && !order && <p role="status">Loading order…</p>}
+    <ErrorMessage error={detail.error} />{detail.loading && !order && <Skeleton variant="detail" label="Loading order details" />}
     {order && !detail.error && <>
       <section className="order-delivery"><h3>{order.fulfilment === 'delivery' ? 'Delivery' : 'Pickup'} Details</h3><strong>{order.address?.recipientName || order.customer?.name}</strong>{(order.address?.phone || order.customer?.phone) && <a href={`tel:${order.address?.phone || order.customer.phone}`}>{order.address?.phone || order.customer.phone}</a>}{order.address ? <p>{[order.address.addressLine1, order.address.addressLine2, order.address.area, order.address.city].filter(Boolean).join(', ')}</p> : <p>{order.branch?.name}</p>}{order.address?.instructions && <p>Rider instructions: {order.address.instructions}</p>}{order.notes && <p>Customer notes: {order.notes}</p>}{order.rider && <p>Rider: {order.rider.name}</p>}</section>
       <section className="order-detail-items"><h3>Items</h3>{order.items?.map((item) => <div key={item.id}><div className="order-detail-line"><span>{item.quantity}x {item.productName}{item.sizeName && ` · ${item.sizeName}`}</span><span>{money(item.lineTotal, order.currencySymbol)}</span></div>{item.addons?.map((addon, index) => <p key={index} className="order-detail-note">{addon.setName}: {addon.optionName} (+{money(addon.price, order.currencySymbol)})</p>)}{item.note && <p className="order-detail-note">Note: {item.note}</p>}</div>)}</section>

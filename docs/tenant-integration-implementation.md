@@ -65,10 +65,10 @@ These are gaps in the current guide/Swagger, not invented frontend endpoints.
 | Branch employee username/password | Branch endpoints cannot create or reveal credentials. Staff accounts use Team email invitations and roles/branch assignments, not a shared branch password. A Team management UI is outside this task. |
 | Branch sales, performance percentage, fleet health and fulfilment metrics | No branch analytics endpoint exists. Active order counts use the documented Orders summary. |
 | Dashboard overview revenue, bestsellers, category share and trend comparisons | No analytics/aggregate reporting endpoints exist in this reference. Existing overview data remains a prototype. |
-| Customers list, customer statistics and loyalty points | No tenant customer-management or loyalty endpoints exist. This screen remains a prototype. |
-| Promo & Discounts / campaign creation, audience, open/click rates | No campaign, coupon or promotional reporting endpoints exist. This screen remains a prototype. |
+| Customers | Integrated with `/customers` and `/customers/:id`: server search, sorting, paging, balances and customer details. |
+| Promo & Discounts | Uses the new Pricing promo-code screens. Campaign emails, audience and open/click rates are outside the pricing API. |
 | Analytics graphs, repeat rate and top sellers | No analytics/reporting endpoints exist. This screen remains a prototype. |
-| Settings delivery radius, tax configuration, notification preferences, email change and two-factor authentication | No matching tenant configuration endpoints exist. Some other Settings fields have Business/Branding/Me/Branch equivalents, but the Settings module was outside the requested scope and remains unchanged. |
+| Store Settings | Integrated with `/store`, `/store/logo`, `/hours`, `/order-settings`, `/notification-preferences` and `/me/change-password`. Login email is read-only; two-factor authentication is unavailable and hidden. |
 | Marking a manually refunded order as resolved | Failed refunds can be listed and their Stripe reference viewed, but no endpoint acknowledges a manual refund or clears `refund_failed`. The owner must refund through Stripe. |
 
 There is also a permissions mismatch in the guide: it says branch staff may name a rider, but the documented rider lookup (`GET /team`) requires `team:view`, which branch staff do not have. The Orders UI lets them dispatch without selecting a rider and does not call the forbidden Team endpoint. A branch-scoped rider lookup is needed to offer that picker to branch staff.
@@ -84,3 +84,15 @@ The implementation does not persist unsupported fields or show mock sales, stock
 For browser checks, Chrome/Edge must be installed, or `CHROME_PATH` must point to a compatible Chromium executable. The browser and fixture servers run locally; restricted environments may need permission for local debugging connections.
 
 Live authenticated acceptance testing still requires actual tenant accounts and working CORS/cookie configuration. No credentials were supplied and no live bakery records were modified.
+
+## Customers, Store Settings and Pricing update (24 November 2026)
+
+The OpenAPI snapshot was refreshed from the live tenant Swagger document. Customers, Store Settings, Pricing Rules, Promo Codes and Quantity Discounts now use authenticated tenant endpoints. Managers do not request owner-only pricing, promo-code or order-settings resources. Quantity discounts use menu view/edit permissions. Store writes require both business and branding edit permissions.
+
+Settings saves only changed sections, preserves mixed branch values until edited, reports partial failures, and retains failed drafts for retry. Money converts to whole minor units; radius is explicitly in kilometres. Hours replace a complete seven-day week on all active branches or the selected branch. Logos upload as the original binary with type, size and dimension validation, with palette suggestions sampled locally. Password changes replace the in-memory access token.
+
+`npm run test:commerce` runs Chrome/Edge against a local API fixture, covering customer browsing/search/sort/paging, partial save recovery, hours, logo upload/removal, password changes, pricing rules, promo creation/edit/activation, quantity discounts, manager restrictions and responsive screenshots. `npm test` includes payload and currency-conversion regressions.
+
+The API documents no response schemas for customer detail, promo-code or quantity-discount detail/list bodies. These screens follow the guide's named fields and conventional data arrays; the customer view also accepts a nested `stats` object. Live authenticated acceptance testing remains necessary to verify those undocumented response shapes. No tenant credentials were supplied and no live records were modified.
+
+Loading placeholders use the shared `Skeleton` and `SkeletonRows` components, with shapes for tables, product lists, cards, metrics, settings and detail panels. Background polling retains existing data; skeletons are decorative, non-interactive and identified by accessible status labels. The shimmer respects `prefers-reduced-motion`. `npm run test:skeletons` checks session restoration and module loading against delayed local responses, including mobile sizing, background refresh and reduced motion.

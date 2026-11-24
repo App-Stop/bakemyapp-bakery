@@ -1,4 +1,5 @@
-﻿import { useState } from 'react'
+import { Skeleton } from '../shared/Skeleton'
+import { useState } from 'react'
 import { can, money, tenant } from '../../lib/tenant'
 import { useTenant } from '../../lib/TenantContext'
 import { useRemote } from '../../lib/useRemote'
@@ -9,15 +10,15 @@ import { loadOrderMetrics, rangeDates } from '../orders/orderMetrics'
 import { summarizeBranchOrders } from './branchMetrics'
 import './branches.css'
 
-function BranchMetrics({ id, canViewOrders, stats, symbol }) {
+function BranchMetrics({ id, canViewOrders, stats, symbol, loading }) {
   const summary = useRemote(() => canViewOrders ? tenant.list('orders/summary', { branchId: id }) : Promise.resolve(null), [id, canViewOrders], { poll: canViewOrders ? 20000 : 0 })
   const branch = stats?.branches[id]
   const resolved = (branch?.completed || 0) + (branch?.cancelled || 0)
   const performance = resolved ? Math.round(branch.completed / resolved * 100) : null
   return <div><div className="branch-metrics">
-    <div><p>Sales</p><strong title="Collected revenue from today's orders">{stats ? money(branch?.revenue || 0, stats.symbol || symbol) : '—'}</strong></div>
-    <div><p>Active Orders</p><strong>{summary.data?.data?.active ?? '—'}</strong></div>
-    <div className={performance != null && performance < 80 ? 'branch-performance-warning' : ''}><p>Performance</p><strong title="Completed orders as a percentage of completed and cancelled orders today">{performance == null ? '—' : `${performance}%`}{performance != null && performance < 80 && <DesignIcon file="a581c" folder="branches" />}</strong></div>
+    <div><p>Sales</p><strong title="Collected revenue from today's orders">{loading && !stats ? <Skeleton variant="metric" label="Loading branch sales" /> : stats ? money(branch?.revenue || 0, stats.symbol || symbol) : '—'}</strong></div>
+    <div><p>Active Orders</p><strong>{summary.loading && !summary.data && canViewOrders ? <Skeleton variant="metric" label="Loading active orders" /> : summary.data?.data?.active ?? '—'}</strong></div>
+    <div className={performance != null && performance < 80 ? 'branch-performance-warning' : ''}><p>Performance</p><strong title="Completed orders as a percentage of completed and cancelled orders today">{loading && !stats ? <Skeleton variant="metric" label="Loading branch performance" /> : performance == null ? '—' : `${performance}%`}{performance != null && performance < 80 && <DesignIcon file="a581c" folder="branches" />}</strong></div>
   </div><ErrorMessage error={summary.error} /></div>
 }
 
@@ -46,20 +47,20 @@ export function BranchesView({ onNavigateToOrders }) {
   return <div className="catalog-page branches-page">
     <header className="catalog-header"><div><h1>Branches</h1><p>Manage your bakery locations and employee access.</p></div>{editable && <button className="catalog-button catalog-primary" onClick={() => setEditor({})} disabled={usage?.limit != null && usage.used >= usage.limit}><DesignIcon file="8a223" />Add Branch</button>}</header>
     <div className="branch-stats">
-      <section><p>Total Branches</p><strong>{list.data ? counts.all : '—'}</strong></section>
-      <section><p>Active</p><strong>{list.data ? counts.active : '—'}</strong></section>
-      <section><p>Avg. Revenue / Branch</p><strong title="Today's collected revenue divided by total branches">{metrics.data && list.data ? `${money(branches.length ? Math.round(metrics.data.revenue / branches.length) : 0, metrics.data.symbol || branding?.currencySymbol)}/d` : '—'}</strong></section>
-      <section><p>Most Earning Branch</p><strong className="branch-top-name" title="Branch with the most collected revenue today">{metrics.data?.topBranch || '—'}</strong></section>
+      <section><p>Total Branches</p><strong>{list.loading && !list.data ? <Skeleton variant="metric" label="Loading branch count" /> : list.data ? counts.all : '—'}</strong></section>
+      <section><p>Active</p><strong>{list.loading && !list.data ? <Skeleton variant="metric" label="Loading branch count" /> : list.data ? counts.active : '—'}</strong></section>
+      <section><p>Avg. Revenue / Branch</p><strong title="Today's collected revenue divided by total branches">{metrics.loading && !metrics.data && canViewOrders ? <Skeleton variant="metric" label="Loading branch revenue" /> : metrics.data && list.data ? `${money(branches.length ? Math.round(metrics.data.revenue / branches.length) : 0, metrics.data.symbol || branding?.currencySymbol)}/d` : '—'}</strong></section>
+      <section><p>Most Earning Branch</p><strong className="branch-top-name" title="Branch with the most collected revenue today">{metrics.loading && !metrics.data && canViewOrders ? <Skeleton variant="metric" label="Loading highest earning branch" /> : metrics.data?.topBranch || '—'}</strong></section>
     </div>
     {usage?.limit != null && usage.used >= usage.limit && <p className="branch-plan-notice">Your plan allows {usage.limit} branches. Contact us to add more.</p>}
     <ErrorMessage error={error || list.error || plan.error || metrics.error} />
     <section className="branches-content" aria-label="Bakery branches">
       <div className="branches-toolbar"><div className="catalog-tabs" role="tablist" aria-label="Branch status">{['all', 'active', 'inactive'].map((tab) => <button key={tab} role="tab" aria-selected={status === tab} onClick={() => setStatus(tab)}>{tab === 'all' ? 'All' : tab === 'active' ? 'Active' : 'Inactive'}<span>{list.data ? counts[tab] : '—'}</span></button>)}</div><CatalogSearch label="Search branches" placeholder="Search branch..." value={q} onChange={setQ} /></div>
-      {list.loading && !list.data && <p role="status" className="branch-empty">Loading branches…</p>}
+      {list.loading && !list.data && <Skeleton variant="cards" label="Loading branches" rows={4} />}
       {!list.loading && !list.error && !rows.length && <div className="branch-empty"><h2>{q || status !== 'all' ? 'No branches found' : 'Your branches will appear here'}</h2><p>{q || status !== 'all' ? 'Try another search or status.' : 'Add your first bakery location to get started.'}</p></div>}
       <div className="branches-grid">{rows.map((branch) => <article key={branch.id} className="branch-card">
         <header><div><h2>{branch.name}</h2><p>{[branch.addressLine1, branch.addressLine2, branch.area, branch.city].filter(Boolean).join(', ')}</p></div><span className={`branch-status branch-status-${branch.status}`}>{!branch.isActive ? 'Inactive' : branch.status === 'paused' ? 'Paused' : branch.status === 'closed' ? 'Closed' : 'Active'}</span></header>
-        <BranchMetrics id={branch.id} canViewOrders={canViewOrders} stats={metrics.data} symbol={branding?.currencySymbol} />
+        <BranchMetrics loading={metrics.loading && canViewOrders} id={branch.id} canViewOrders={canViewOrders} stats={metrics.data} symbol={branding?.currencySymbol} />
         <div className="branch-card-actions">{can(user, 'orders:view') && <button className="catalog-button" onClick={() => onNavigateToOrders(branch.id)}>View Orders</button>}{editable && <button className="catalog-button catalog-primary" disabled={busy} onClick={() => edit(branch)}>Manage Branch</button>}</div>
       </article>)}</div>
     </section>

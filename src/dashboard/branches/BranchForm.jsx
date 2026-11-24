@@ -1,4 +1,5 @@
-﻿import { useState } from 'react'
+import { Skeleton } from '../shared/Skeleton'
+import { useState } from 'react'
 import { can, changes, tenant, toMinor } from '../../lib/tenant'
 import { useTenant } from '../../lib/TenantContext'
 import { useRemote } from '../../lib/useRemote'
@@ -15,7 +16,7 @@ function EmployeeAccess({ branchId }) {
   const allowed = can(user, 'team:view')
   const team = useRemote(() => branchId && allowed ? tenant.list('team', { branchId, role: 'branch_staff', status: 'active', limit: 100 }) : Promise.resolve(null), [branchId, allowed])
   return <section className="branch-employee-access"><div><h3>Employee Access</h3><p>Branch staff sign in with their own email and password. Each employee manages their password.</p></div>
-    {branchId && allowed ? <><ErrorMessage error={team.error} />{team.loading && <p role="status">Loading staff accounts…</p>}{team.data?.data?.map((member) => <div className="catalog-field-row" key={member.id}><CatalogField label="Staff email" value={member.email} readOnly /><CatalogField label="Password" value="Managed by employee" readOnly /></div>)}{!team.loading && !team.error && !team.data?.data?.length && <p>No active staff accounts assigned to this branch.</p>}</> : <p>{branchId ? 'Ask your account owner to manage branch staff access.' : 'Assign staff accounts to this branch after creating it.'}</p>}
+    {branchId && allowed ? <><ErrorMessage error={team.error} />{team.loading && !team.data && <Skeleton label="Loading staff accounts" fields={2} />}{team.data?.data?.map((member) => <div className="catalog-field-row" key={member.id}><CatalogField label="Staff email" value={member.email} readOnly /><CatalogField label="Password" value="Managed by employee" readOnly /></div>)}{!team.loading && !team.error && !team.data?.data?.length && <p>No active staff accounts assigned to this branch.</p>}</> : <p>{branchId ? 'Ask your account owner to manage branch staff access.' : 'Assign staff accounts to this branch after creating it.'}</p>}
   </section>
 }
 

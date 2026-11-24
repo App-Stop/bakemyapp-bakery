@@ -1,840 +1,143 @@
-import { useState, useRef, useEffect } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  CroissantIcon,
-  ArrowDown01Icon,
-  CheckmarkCircle02Icon,
-  ViewIcon,
-  ViewOffIcon,
-} from '@hugeicons/core-free-icons'
+import { Skeleton } from '../shared/Skeleton'
+import { useRef, useState } from 'react'
+import { tenant, can, changes } from '../../lib/tenant'
+import { api } from '../../lib/api'
+import { extractPalette, readableTextOn } from '../../lib/color'
+import { useTenant } from '../../lib/TenantContext'
+import { useRemote } from '../../lib/useRemote'
+import { ErrorMessage, Field as ApiField, buttonClass } from '../shared/ApiUI'
 import { SettingsToggle } from './SettingsToggle'
-import { EditBrandColorModal } from './EditBrandColorModal'
+import { storeForm, storePatch, orderForm, orderPatch, week, hoursBody, validateLogo } from './settingsHelpers'
+import '../shared/modules.css'
+import './settings.css'
+import { useSettingsNavigation } from './useSettingsNavigation'
+import { CatalogModal } from '../shared/CatalogUI'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { CroissantIcon } from '@hugeicons/core-free-icons'
 
-const SECTIONS = [
-  { id: 'store-info', label: 'Store Information' },
-  { id: 'business-hours', label: 'Business Hours' },
-  { id: 'order-settings', label: 'Order Settings' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'account-security', label: 'Account & Security' },
-]
-
-const TAX_LABELS = ['VAT', 'Sales Tax', 'GST', 'Service Tax']
-
-function readImage(file, maxSize = 512) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = reject
-    reader.onload = () => {
-      if (file.type === 'image/svg+xml') return resolve(reader.result)
-      const img = new Image()
-      img.onerror = reject
-      img.onload = () => {
-        const scale = Math.min(1, maxSize / Math.max(img.width, img.height))
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.round(img.width * scale)
-        canvas.height = Math.round(img.height * scale)
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
-        resolve(canvas.toDataURL('image/png'))
-      }
-      img.src = reader.result
-    }
-    reader.readAsDataURL(file)
-  })
+const identity = (data) => data
+function useSection(path, allowed, transform = identity) {
+  const remote = useRemote(() => allowed ? tenant.get(path) : Promise.resolve(null), [path, allowed])
+  const [seen, setSeen] = useState(null)
+  const [base, setBase] = useState(null)
+  const [draft, setDraft] = useState(null)
+  const [error, setError] = useState(null)
+  if (remote.data && remote.data !== seen) { setSeen(remote.data); setBase(remote.data.data); setDraft(transform(remote.data.data)) }
+  return { ...remote, base, draft, setDraft, error: error || remote.error, setError, accept: (data) => { setBase(data); setDraft(transform(data)); setError(null) } }
 }
-
-export function SettingsView({ state, actions }) {
-  const [activeSection, setActiveSection] = useState('store-info')
-  const [isColorModalOpen, setIsColorModalOpen] = useState(false)
-  const [showToast, setShowToast] = useState(false)
-  const [toastMessage, setToastMessage] = useState('Settings saved successfully!')
-  const [showPassword, setShowPassword] = useState(false)
-
-  // Local form drafts initialized from state
-  const [shopDraft, setShopDraft] = useState({
-    name: state.shop?.name || 'Ross Bakers Co.',
-    tagline: state.shop?.tagline || 'Freshly baked goods',
-    email: state.shop?.email || 'hello@rossbakers.co',
-    address: state.shop?.address || '742 Evergreen Terrace, Springfield',
-    phone: state.shop?.phone || '+1 555-321-8876',
-    logo: state.shop?.logo || null,
-  })
-
-  const [brandColorDraft, setBrandColorDraft] = useState(state.brandColor || '#c15400')
-  const [prevBrandColor, setPrevBrandColor] = useState(state.brandColor)
-
-  if (prevBrandColor !== state.brandColor) {
-    setPrevBrandColor(state.brandColor)
-    setBrandColorDraft(state.brandColor || '#c15400')
-  }
-
-  const [businessHours, setBusinessHours] = useState(
-    state.settings?.businessHours || [
-      { day: 'Monday', from: '7:00 AM', to: '9:00 PM', open: true },
-      { day: 'Tuesday', from: '7:00 AM', to: '9:00 PM', open: true },
-      { day: 'Wednesday', from: '7:00 AM', to: '9:00 PM', open: true },
-      { day: 'Thursday', from: '7:00 AM', to: '9:00 PM', open: true },
-      { day: 'Friday', from: '7:00 AM', to: '9:00 PM', open: true },
-      { day: 'Saturday', from: '8:00 AM', to: '9:00 PM', open: true },
-      { day: 'Sunday', from: '--:--', to: '--:--', open: false },
-    ],
-  )
-
-  const [orderSettings, setOrderSettings] = useState({
-    acceptDelivery: state.settings?.orderSettings?.acceptDelivery ?? true,
-    acceptPickup: state.settings?.orderSettings?.acceptPickup ?? true,
-    estimatedDeliveryTime:
-      state.settings?.orderSettings?.estimatedDeliveryTime ||
-      state.delivery?.estimatedTime?.replace(/[^0-9]/g, '') ||
-      '25',
-    minOrderAmount:
-      state.settings?.orderSettings?.minOrderAmount ||
-      (state.delivery?.fee ? `$${state.delivery.fee}` : '$10.00'),
-    deliveryRadius: state.settings?.orderSettings?.deliveryRadius || '5',
-    taxRate: state.settings?.orderSettings?.taxRate || state.delivery?.taxRate || '2.5',
-    taxLabel: state.settings?.orderSettings?.taxLabel || state.delivery?.taxLabel || 'VAT',
-  })
-
-  const [notifications, setNotifications] = useState({
-    newOrders: state.settings?.notifications?.newOrders ?? true,
-    statusUpdates: state.settings?.notifications?.statusUpdates ?? true,
-    lowStock: state.settings?.notifications?.lowStock ?? true,
-    dailySummary: state.settings?.notifications?.dailySummary ?? false,
-    weeklyReport: state.settings?.notifications?.weeklyReport ?? true,
-    customerReviews: state.settings?.notifications?.customerReviews ?? true,
-  })
-
-  const [security, setSecurity] = useState({
-    loginEmail: state.settings?.security?.loginEmail || 'ross@rossbakers.co',
-    password: state.settings?.security?.password || '••••••••••••••••',
-    twoFactorEnabled: state.settings?.security?.twoFactorEnabled ?? false,
-  })
-
-  const logoInputRef = useRef(null)
-
-
-  const rootRef = useRef(null)
-  const asideRef = useRef(null)
-  const navRef = useRef(null)
-  // While a tab click is smooth-scrolling, keep that tab active instead of the ones scrolled past.
-  const scrollLockRef = useRef(null)
-
-  // The dashboard scrolls inside its <main> (and, in the landing demo, inside a device iframe), so
-  // find the real scroll container rather than assuming the window.
-  const getScroller = () => {
-    const root = rootRef.current
-    if (!root) return null
-    const win = root.ownerDocument.defaultView
-    for (let el = root.parentElement; el; el = el.parentElement) {
-      const overflowY = win.getComputedStyle(el).overflowY
-      if (overflowY === 'auto' || overflowY === 'scroll') return el
-    }
-    return root.ownerDocument.scrollingElement
-  }
-
-  // Space the sticky phone tabs take at the top of the scroller; the side nav needs only a margin.
-  const getStickyOffset = () => {
-    const aside = asideRef.current
-    if (!aside) return 24
-    const win = aside.ownerDocument.defaultView
-    const stacked = win.getComputedStyle(aside).position === 'sticky' && !win.matchMedia('(min-width: 64rem)').matches
-    return stacked ? aside.offsetHeight + 16 : 24
-  }
-
-  const getSectionTop = (scroller, el) => {
-    const scrollerTop = scroller === scroller.ownerDocument.scrollingElement ? 0 : scroller.getBoundingClientRect().top
-    return el.getBoundingClientRect().top - scrollerTop
-  }
-
-  // Track the active section as the settings scroll.
-  useEffect(() => {
-    const scroller = getScroller()
-    const root = rootRef.current
-    if (!scroller || !root) return undefined
-    const target = scroller === root.ownerDocument.scrollingElement ? root.ownerDocument.defaultView : scroller
-
-    const handleScroll = () => {
-      if (scrollLockRef.current) return
-      const offset = getStickyOffset() + 8
-      const atBottom = scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2
-      let current = SECTIONS[0].id
-      if (atBottom) current = SECTIONS[SECTIONS.length - 1].id
-      else {
-        for (const sec of SECTIONS) {
-          const el = root.querySelector(`#${sec.id}`)
-          if (el && getSectionTop(scroller, el) <= offset) current = sec.id
-        }
-      }
-      setActiveSection(current)
-    }
-
-    const unlock = () => {
-      if (!scrollLockRef.current) return
-      clearTimeout(scrollLockRef.current.timer)
-      scrollLockRef.current = null
-    }
-
-    handleScroll()
-    target.addEventListener('scroll', handleScroll, { passive: true })
-    target.addEventListener('scrollend', unlock)
-    // A hand scroll takes over from a tab click straight away.
-    target.addEventListener('wheel', unlock, { passive: true })
-    target.addEventListener('touchstart', unlock, { passive: true })
-    return () => {
-      target.removeEventListener('scroll', handleScroll)
-      target.removeEventListener('scrollend', unlock)
-      target.removeEventListener('wheel', unlock)
-      target.removeEventListener('touchstart', unlock)
-      unlock()
-    }
-  }, [])
-
-  // Keep the active tab visible in the horizontally scrolling phone tab strip.
-  useEffect(() => {
-    const nav = navRef.current
-    if (!nav || nav.scrollWidth <= nav.clientWidth) return
-    const btn = nav.querySelector(`[data-section="${activeSection}"]`)
-    if (!btn) return
-    const navRect = nav.getBoundingClientRect()
-    const btnRect = btn.getBoundingClientRect()
-    const left = nav.scrollLeft + (btnRect.left - navRect.left) - (navRect.width - btnRect.width) / 2
-    nav.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
-  }, [activeSection])
-
-  const scrollToSection = (id) => {
-    setActiveSection(id)
-    const scroller = getScroller()
-    const el = rootRef.current?.querySelector(`#${id}`)
-    if (!scroller || !el) return
-    if (scrollLockRef.current) clearTimeout(scrollLockRef.current.timer)
-    scrollLockRef.current = { id, timer: setTimeout(() => { scrollLockRef.current = null }, 1000) }
-    const top = scroller.scrollTop + getSectionTop(scroller, el) - getStickyOffset()
-    scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
-  }
-
-  const handleLogoUpload = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file || !file.type.startsWith('image/')) return
-    const dataUrl = await readImage(file)
-    setShopDraft((prev) => ({ ...prev, logo: dataUrl }))
-    actions.updateShop({ logo: dataUrl })
-    triggerToast('Bakery logo updated!')
-  }
-
-  const handleToggleDay = (idx) => {
-    setBusinessHours((prev) =>
-      prev.map((day, i) => {
-        if (i !== idx) return day
-        const willBeOpen = !day.open
-        return {
-          ...day,
-          open: willBeOpen,
-          from: willBeOpen ? (day.from === '--:--' ? '7:00 AM' : day.from) : '--:--',
-          to: willBeOpen ? (day.to === '--:--' ? '9:00 PM' : day.to) : '--:--',
-        }
-      }),
-    )
-  }
-
-  const handleTimeChange = (idx, field, value) => {
-    setBusinessHours((prev) =>
-      prev.map((day, i) => (i === idx ? { ...day, [field]: value } : day)),
-    )
-  }
-
-  const triggerToast = (msg) => {
-    setToastMessage(msg)
-    setShowToast(true)
-    setTimeout(() => {
-      setShowToast(false)
-    }, 3200)
-  }
-
-  const handleSaveChanges = () => {
-    actions.saveAllSettings({
-      shop: shopDraft,
-      brandColor: brandColorDraft,
-      delivery: {
-        allowPickup: orderSettings.acceptPickup,
-        taxRate: orderSettings.taxRate,
-        taxLabel: orderSettings.taxLabel,
-        estimatedTime: `${orderSettings.estimatedDeliveryTime} mins`,
-      },
-      settings: {
-        businessHours,
-        orderSettings,
-        notifications,
-        security,
-      },
+const notificationLabels = { newOrderAlerts: 'New order alerts', orderStatusUpdates: 'Order status updates', lowStockWarnings: 'Low stock warnings', dailySalesSummary: 'Daily sales summary', weeklyAnalyticsReport: 'Weekly analytics report', customerReviews: 'Customer reviews' }
+const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+export function SettingsView() {
+  const { user, updateStore } = useTenant()
+  const storeAllowed = can(user, 'business:view') && can(user, 'branding:view')
+  const editStore = can(user, 'business:edit') && can(user, 'branding:edit')
+  const owner = user.role === 'tenant_owner' && can(user, 'payments:manage')
+  const store = useSection('store', storeAllowed, storeForm)
+  const hours = useSection('hours', can(user, 'branches:view'))
+  const orders = useSection('order-settings', owner, orderForm)
+  const notices = useSection('notification-preferences', true)
+  const presets = useRemote(() => storeAllowed ? tenant.get('branding/presets') : Promise.resolve(null), [storeAllowed])
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [password, setPassword] = useState({ currentPassword: '', newPassword: '', confirmation: '' })
+  const [passwordError, setPasswordError] = useState(null)
+  const [branchId, setBranchId] = useState('')
+  const [hoursDraft, setHoursDraft] = useState(null)
+  const [hoursOriginal, setHoursOriginal] = useState(null)
+  const [moreColors, setMoreColors] = useState(false)
+  const [colorEditor, setColorEditor] = useState(false)
+  const logoInput = useRef(null)
+  const sections = [...(storeAllowed ? [['store-info', 'Store Information']] : []), ...(can(user, 'branches:view') ? [['business-hours', 'Business Hours']] : []), ...(owner ? [['order-settings', 'Order Settings']] : []), ['notifications', 'Notifications'], ['account-security', 'Account & Security']]
+  const { rootRef, asideRef, navRef, active, navigate } = useSettingsNavigation(sections.map(([id]) => id))
+  const [logoBusy, setLogoBusy] = useState(false)
+  const [logoColors, setLogoColors] = useState([])
+  const setField = (section, key, value) => { section.setDraft((draft) => ({ ...draft, [key]: value })); setMessage('') }
+  const input = (section, key, label, props = {}) => <Field label={label} name={key} value={section.draft[key] ?? ''} errors={section.error?.fieldErrors} onChange={(e) => setField(section, key, e.target.value)} {...props} />
+  const toggle = (section, key, label, description) => <div key={key} className="settings-toggle-row"><div><strong>{label}</strong>{description && <small>{description}</small>}</div><SettingsToggle checked={!!section.draft[key]} ariaLabel={label} onChange={(value) => setField(section, key, value)} /></div>
+  const save = async (event) => {
+    event.preventDefault(); setBusy(true); setMessage('')
+    let failed = [store, hours, orders, notices].some((section) => section.error && !section.base)
+    let saved = false
+    const run = async (section, action) => { section.setError(null); try { await action(); saved = true } catch (error) { section.setError(error); failed = true } }
+    if (editStore && store.draft) await run(store, async () => {
+      const patch = storePatch(store.base, store.draft)
+      if (!/^#[0-9a-f]{6}$/i.test(store.draft.primary)) throw new Error('Use a colour like #C15400.')
+      // An unchanged store can still be confirmed for the setup checklist.
+      if (Object.keys(patch).length || !store.base.businessConfirmed || !store.base.brandingConfirmed) { const result = await tenant.patch('store', patch); store.accept(result.data); updateStore?.(result.data) }
     })
-    triggerToast('Settings saved successfully!')
+    if (can(user, 'branches:edit') && hoursDraft) await run(hours, async () => { if (JSON.stringify(hoursDraft) !== JSON.stringify(hoursOriginal)) { const result = await tenant.put('hours', hoursBody(hoursDraft, branchId)); hours.accept(result.data); setHoursOriginal(hoursDraft) } })
+    if (owner && orders.draft) await run(orders, async () => { const patch = orderPatch(orders.base, orders.draft); if (Object.keys(patch).length) orders.accept((await tenant.patch('order-settings', patch)).data) })
+    if (notices.draft) await run(notices, async () => { const patch = changes(notices.base, notices.draft); if (Object.keys(patch).length) notices.accept((await tenant.patch('notification-preferences', patch)).data) })
+    setMessage(failed ? 'Some sections could not be saved. Review the errors below; your other changes were saved.' : saved ? 'Settings saved.' : 'No changes to save.'); setBusy(false)
   }
-
-  const handleSaveBrandColor = (newColor) => {
-    setBrandColorDraft(newColor)
-    actions.setBrandColor(newColor)
-    actions.updateSettings({
-      ...state.settings,
-      brandColor: newColor,
-    })
-    triggerToast('Brand color updated successfully!')
+  const logo = async (file, remove = false) => {
+    setLogoBusy(true); store.setError(null); setMessage('')
+    try { if (!remove) { await validateLogo(file); const localUrl = URL.createObjectURL(file); try { setLogoColors(await extractPalette(localUrl)) } finally { URL.revokeObjectURL(localUrl) } } else setLogoColors([]); const result = remove ? await tenant.delete('store/logo') : await tenant.post('store/logo', file)
+      // A logo operation must not discard pending edits to store fields.
+      const draft = store.draft; store.accept(result.data); store.setDraft(draft); updateStore?.(result.data); setMessage('Logo saved.')
+    } catch (error) { store.setError(error) } finally { setLogoBusy(false) }
   }
-
-  return (
-    <div ref={rootRef} className="mx-auto flex max-w-[1360px] flex-col gap-6 lg:gap-8 pb-16">
-      {/* Toast Notification */}
-      {showToast && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-full bg-ink text-white px-5 py-3 shadow-xl animate-fadeIn">
-          <HugeiconsIcon icon={CheckmarkCircle02Icon} size={20} className="text-[#39ab00]" />
-          <span className="text-sm font-medium">{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Top Header Row */}
-      <div className="flex flex-wrap items-center justify-between gap-4 max-sm:flex-nowrap max-sm:items-start">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-ink">
-            Store Settings
-          </h1>
-          <p className="text-xs sm:text-sm text-muted">
-            Configure your store information, business hours, order limits, and notifications.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={handleSaveChanges}
-          className="shrink-0 rounded-full bg-brand px-6 py-3 text-sm font-semibold text-on-brand shadow-sm transition-all hover:brightness-105 active:scale-95 cursor-pointer max-sm:px-5"
-        >
-          Save Changes
-        </button>
+  const changePassword = async () => {
+    setBusy(true); setPasswordError(null); setMessage('')
+    try { if (password.newPassword !== password.confirmation) throw new Error('Passwords do not match.'); if (password.newPassword.length < 12) throw new Error('Use at least 12 characters.'); const result = await tenant.post('me/change-password', { currentPassword: password.currentPassword, newPassword: password.newPassword }); api.setToken(result.data.accessToken); setPassword({ currentPassword: '', newPassword: '', confirmation: '' }); setMessage('Password changed. Your other devices have been signed out.') } catch (error) { setPasswordError(error) } finally { setBusy(false) }
+  }
+  const selectedWeek = hoursDraft || (hours.base?.sameForAll ? week(hours.base.hours) : null)
+  const selectBranch = (id) => { setBranchId(id); const source = id ? hours.base.branches.find((b) => b.id === id)?.hours : hours.base.hours || []; setHoursDraft(week(source)); setHoursOriginal(id || hours.base.sameForAll ? week(source) : null) }
+  return <form ref={rootRef} onSubmit={save} className="settings-page">
+    <header className="settings-header"><div><h1>Store Settings</h1><p>Configure your store information, business hours, order limits, and notifications.</p></div><button className="settings-save" disabled={busy || logoBusy}>{busy ? 'Saving…' : 'Save Changes'}</button></header>
+    {message && <p role="status" className="catalog-notice">{message}</p>}
+    <div className="settings-layout">
+      <aside ref={asideRef} className="settings-sidebar"><nav ref={navRef} aria-label="Settings sections">{sections.map(([id, label]) => <button type="button" data-section={id} key={id} aria-current={active === id ? 'true' : undefined} onClick={() => navigate(id)}>{label}</button>)}</nav></aside>
+      <div className="settings-content">
+        {storeAllowed && <SettingsSection id="store-info" title="Store Information" description="Update your public store details and contact credentials." section={store}>
+          {store.draft && <fieldset disabled={!editStore || busy || logoBusy} className="settings-fields">
+            {!editStore && <p className="settings-hint">Only the owner can change store information.</p>}
+            <div className="settings-store-main">
+              <div className="settings-logo"><span>Bakery Logo</span><div className="settings-logo-preview">{store.base.logo?.url ? <img src={store.base.logo.url} alt="Bakery logo" /> : <HugeiconsIcon icon={CroissantIcon} size={40} />}</div><input ref={logoInput} type="file" className="hidden" aria-label="Upload bakery logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={(e) => { if (e.target.files?.[0]) logo(e.target.files[0]); e.target.value = '' }} /><button type="button" className="settings-text-button" onClick={() => logoInput.current?.click()}>{logoBusy ? 'Updating…' : 'Change Logo'}</button>{store.base.logo && <button type="button" className="settings-text-button" onClick={() => logo(null, true)}>Remove logo</button>}<small className="settings-hint">512 × 512 recommended</small></div>
+              <div className="module-grid">{input(store, 'name', 'Bakery Name', { required: true })}{input(store, 'contactEmail', 'Email Address', { type: 'email' })}{input(store, 'address', 'Physical Address', { maxLength: 300 })}{input(store, 'contactPhone', 'Phone Number', { type: 'tel' })}</div>
+            </div>
+            <div className="settings-brand"><span>Brand color</span><div className="settings-brand-row"><button type="button" aria-label="Current brand color swatch" className="settings-color-swatch" style={{ backgroundColor: /^#[0-9a-f]{6}$/i.test(store.draft.primary) ? store.draft.primary : '#555' }} onClick={() => setColorEditor(true)} /><Field label="Custom Color" name="primary" errors={store.error?.fieldErrors} pattern="#[0-9a-fA-F]{6}" value={store.draft.primary} onChange={(e) => store.setDraft((d) => ({ ...d, preset: 'custom', primary: e.target.value.toUpperCase() }))} /><button type="button" className="settings-secondary" onClick={() => setColorEditor(true)}>Change</button></div></div>
+            <details className="settings-advanced"><summary>Additional store details</summary><div className="module-grid">
+              <Field label="Time zone" name="timezone" errors={store.error?.fieldErrors}><><input name="timezone" list="store-timezones" value={store.draft.timezone} required onChange={(e) => setField(store, 'timezone', e.target.value)} /><datalist id="store-timezones">{Intl.supportedValuesOf('timeZone').map((zone) => <option key={zone} value={zone} />)}</datalist></></Field>
+              {input(store, 'appName', 'App name', { placeholder: store.draft.name })}{input(store, 'currencyCode', 'Currency code', { pattern: '[A-Z]{3}', maxLength: 3, required: true })}{input(store, 'currencySymbol', 'Currency symbol', { maxLength: 8, required: true })}<Field label="Store slug" value={store.base.slug} disabled /><Field label="Status" value={store.base.status} disabled />
+            </div><p className="settings-hint mt-3">Ask Bake My App to change your store slug. When changing currency, update the currency symbol too.</p></details>
+          </fieldset>}
+        </SettingsSection>}
+        {can(user, 'branches:view') && <SettingsSection id="business-hours" title="Business Hours" description="Define times when customers can place delivery and pickup orders." section={hours} onReload={() => { setHoursDraft(null); setHoursOriginal(null); setBranchId('') }}>
+          {hours.base && <fieldset disabled={busy || !can(user, 'branches:edit')} className="settings-fields">
+            {hours.base.branches.length > 1 && <Field label="Apply hours to"><select value={branchId} onChange={(e) => selectBranch(e.target.value)}><option value="">All active branches</option>{hours.base.branches.map((b) => <option key={b.id} value={b.id}>{b.name}{b.isActive ? '' : ' (inactive)'}</option>)}</select></Field>}
+            {!selectedWeek && <><p>Branches have different hours. Select a branch or explicitly set a shared week.</p><button type="button" className={buttonClass} onClick={() => selectBranch('')}>Set a shared week</button></>}
+            <div>{selectedWeek?.map((day, i) => <div key={day.day}>
+              <div className="settings-hour-row"><span className="settings-hour-day">{dayNames[i]}</span><div className="settings-hour-times">{!day.isClosed ? <>{['opensAt', 'closesAt'].map((key, index) => <span key={key} className="contents">{index === 1 && <span>to</span>}<input aria-label={`${dayNames[i]} ${key === 'opensAt' ? 'opens' : 'closes'}`} name={`hours.${i}.${key}`} aria-invalid={!!hours.error?.fieldErrors?.[`hours.${i}.${key}`]} type="time" required value={day[key]} onChange={(e) => { const next = [...selectedWeek]; next[i] = { ...day, [key]: e.target.value }; setHoursDraft(next); if (!hoursOriginal) setHoursOriginal(selectedWeek) }} /></span>)}</> : <span className="settings-closed">--:--</span>}</div><div className="settings-hour-status" data-closed={day.isClosed}><span>{day.isClosed ? 'Closed' : 'Open'}</span><SettingsToggle checked={!day.isClosed} ariaLabel={`${dayNames[i]} open`} onChange={(open) => { const next = [...selectedWeek]; next[i] = { ...day, isClosed: !open }; setHoursDraft(next); if (!hoursOriginal) setHoursOriginal(selectedWeek) }} /></div></div>
+              {['opensAt', 'closesAt', 'isClosed', 'day'].map((key) => hours.error?.fieldErrors?.[`hours.${i}.${key}`] && <p key={key} className="settings-hour-errors">{hours.error.fieldErrors[`hours.${i}.${key}`]}</p>)}
+            </div>)}</div>
+            <p className="settings-hint">Hours use {store.base?.timezone || 'the bakery time zone'}. A shared week replaces hours on every active branch.</p>
+          </fieldset>}
+        </SettingsSection>}
+        {owner && <SettingsSection id="order-settings" title="Order Settings" description="Configure delivery capabilities, kitchen prep estimates, and order limits." section={orders}>{orders.draft && <fieldset disabled={busy} className="settings-fields">
+          {toggle(orders, 'acceptDelivery', 'Accept delivery orders', 'Allow customers to request direct delivery.')}{toggle(orders, 'acceptPickup', 'Accept pickup orders', 'Allow quick carryout & store pickups.')}<hr className="settings-divider" />
+          <div className="settings-order-grid">{input(orders, 'deliveryMinutes', 'Estimated delivery time (mins)', { type: 'number', min: 1, max: 600 })}{input(orders, 'minimumOrder', `Minimum Order Amount (${store.base?.currencySymbol || 'currency'})`, { type: 'number', min: 0, step: '0.01', placeholder: orders.base.branchesDiffer?.minimumOrder ? 'Varies by branch' : '' })}{input(orders, 'deliveryRadiusKm', 'Delivery Radius (km)', { type: 'number', min: 0, step: 'any', placeholder: orders.base.branchesDiffer?.deliveryRadiusKm ? 'Varies by branch' : 'No limit' })}</div>
+          <hr className="settings-divider" /><div className="module-grid">{input(orders, 'taxRate', 'Tax Rate (%)', { type: 'number', min: 0, max: 100, step: 'any' })}<Field label="Tax Label" name="taxLabel" errors={orders.error?.fieldErrors}><select value={orders.draft.taxLabel} onChange={(e) => setField(orders, 'taxLabel', e.target.value)}>{['Tax', 'VAT', 'Sales Tax', 'GST', 'Service Tax'].map((label) => <option key={label}>{label}</option>)}</select></Field></div>
+          <p className="settings-hint">Minimum order and delivery radius changes apply to every branch. Empty radius means no limit; untouched values that vary are preserved.</p>
+        </fieldset>}</SettingsSection>}
+        <SettingsSection id="notifications" title="Notification Preferences" description="Control how and when you receive alerts and updates." section={notices}>{notices.draft && <fieldset disabled={busy} className="settings-notifications">{Object.entries(notificationLabels).map(([key, label]) => toggle(notices, key, label, notificationDescriptions[key]))}<p className="settings-hint mt-4">These preferences are personal to your account. Summary and low-stock emails are not sent yet.</p></fieldset>}</SettingsSection>
+        <section id="account-security" className="settings-card"><div className="settings-card-heading"><h2>Account & Security</h2><p>Secure your dashboard login and active sessions.</p></div><ErrorMessage error={passwordError} /><div className="module-grid"><Field label="Login Email" value={user.email || ''} disabled /><div className="settings-hint self-center">Your sign-in email cannot be changed here.</div></div><fieldset disabled={busy} className="module-grid">{[['currentPassword', 'Current password'], ['newPassword', 'New password'], ['confirmation', 'Confirm new password']].map(([key, label]) => <Field key={key} label={label} type="password" autoComplete={key === 'currentPassword' ? 'current-password' : 'new-password'} name={key} value={password[key]} errors={passwordError?.fieldErrors} onChange={(e) => setPassword({ ...password, [key]: e.target.value })} />)}</fieldset><p className="settings-hint">Use at least 12 characters, avoid common passwords and your email name.</p><button type="button" className="settings-secondary self-start" disabled={busy || !password.currentPassword || !password.newPassword || !password.confirmation} onClick={changePassword}>Change password</button></section>
       </div>
-
-      {/* Settings Split Layout */}
-      <div className="flex flex-col lg:flex-row gap-5 lg:gap-6 items-start">
-        {/* Left Side Navigation */}
-        {/* Phones (264:9325) show the sections as underlined tabs. */}
-        <aside ref={asideRef} className="w-full lg:w-[240px] shrink-0 lg:sticky lg:top-4 bg-white rounded-[20px] p-2.5 shadow-[0px_4px_10px_rgba(0,0,0,0.02)] border border-[#f0ece9]/60 overflow-hidden max-sm:sticky max-sm:top-0 max-sm:z-20 max-sm:-mx-4 max-sm:w-[calc(100%+2rem)] max-sm:rounded-none max-sm:border-0 max-sm:border-b max-sm:border-[#dcdcdc] max-sm:bg-surface max-sm:px-4 max-sm:py-0 max-sm:shadow-none">
-          <nav ref={navRef} className="flex flex-row lg:flex-col gap-1.5 lg:gap-2 overflow-x-auto lg:overflow-visible no-scrollbar pb-1 lg:pb-0 max-sm:gap-1 max-sm:pb-0">
-            {SECTIONS.map((sec) => {
-              const isActive = activeSection === sec.id
-              return (
-                <button
-                  key={sec.id}
-                  type="button"
-                  data-section={sec.id}
-                  aria-current={isActive ? 'true' : undefined}
-                  onClick={() => scrollToSection(sec.id)}
-                  className={`flex items-center px-4 py-3 rounded-xl text-sm transition-all text-left whitespace-nowrap cursor-pointer shrink-0 max-sm:-mb-px max-sm:rounded-none max-sm:border-b-2 max-sm:bg-transparent max-sm:shadow-none ${
-                    isActive
-                      ? 'bg-brand-light text-brand font-semibold shadow-xs max-sm:border-brand'
-                      : 'text-body font-medium hover:bg-[#f5f5f5] max-sm:border-transparent'
-                  }`}
-                >
-                  {sec.label}
-                </button>
-              )
-            })}
-          </nav>
-        </aside>
-
-        {/* Right Side Content Cards */}
-        <div className="flex-1 flex flex-col gap-5 lg:gap-6 w-full min-w-0">
-          {/* Card 1: Store Information */}
-          <section
-            id="store-info"
-            className="rounded-[20px] bg-white p-5 sm:p-6 lg:p-7 shadow-[0px_4px_10px_rgba(0,0,0,0.02)] border border-[#f0ece9]/60 flex flex-col gap-6 scroll-mt-6"
-          >
-            <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold text-ink">Store Information</h2>
-              <p className="text-[13px] text-muted">
-                Update your public store details and contact credentials.
-              </p>
-            </div>
-
-            {/* Logo + Fields */}
-            <div className="flex flex-col sm:flex-row gap-6 items-start">
-              {/* Logo Area */}
-              <div className="flex flex-col gap-2.5 items-start w-[140px] shrink-0">
-                <span className="text-base font-medium text-ink">Bakery Logo</span>
-                <div className="flex flex-col items-center gap-2">
-                  <div className="size-[100px] rounded-xl bg-[#f5f5f5] flex items-center justify-center overflow-hidden border border-[#e8e8e8]">
-                    {shopDraft.logo ? (
-                      <img
-                        src={shopDraft.logo}
-                        alt="Bakery logo"
-                        className="size-full object-contain p-2"
-                      />
-                    ) : (
-                      <div className="size-full bg-brand flex items-center justify-center text-on-brand">
-                        <HugeiconsIcon icon={CroissantIcon} size={40} />
-                      </div>
-                    )}
-                  </div>
-                  <input
-                    ref={logoInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleLogoUpload}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => logoInputRef.current?.click()}
-                    className="text-xs font-semibold text-brand hover:opacity-85 transition-opacity cursor-pointer"
-                  >
-                    Change Logo
-                  </button>
-                </div>
-              </div>
-
-              {/* 2x2 Grid of Inputs */}
-              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
-                <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                  <span className="text-xs font-medium text-muted">Bakery Name</span>
-                  <input
-                    type="text"
-                    value={shopDraft.name}
-                    onChange={(e) => setShopDraft({ ...shopDraft, name: e.target.value })}
-                    className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                    placeholder="Ross Bakers Co."
-                  />
-                </label>
-
-                <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                  <span className="text-xs font-medium text-muted">Email Address</span>
-                  <input
-                    type="email"
-                    value={shopDraft.email}
-                    onChange={(e) => setShopDraft({ ...shopDraft, email: e.target.value })}
-                    className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                    placeholder="hello@rossbakers.co"
-                  />
-                </label>
-
-                <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                  <span className="text-xs font-medium text-muted">Physical Address</span>
-                  <input
-                    type="text"
-                    value={shopDraft.address}
-                    onChange={(e) => setShopDraft({ ...shopDraft, address: e.target.value })}
-                    className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                    placeholder="742 Evergreen Terrace, Springfield"
-                  />
-                </label>
-
-                <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                  <span className="text-xs font-medium text-muted">Phone Number</span>
-                  <input
-                    type="tel"
-                    value={shopDraft.phone}
-                    onChange={(e) => setShopDraft({ ...shopDraft, phone: e.target.value })}
-                    className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                    placeholder="+1 555-321-8876"
-                  />
-                </label>
-              </div>
-            </div>
-
-            {/* Brand Color Subsection */}
-            <div className="flex flex-col gap-2.5 pt-2">
-              <span className="text-base font-medium text-ink">Brand color</span>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  aria-label="Current brand color swatch"
-                  onClick={() => setIsColorModalOpen(true)}
-                  style={{ backgroundColor: brandColorDraft }}
-                  className="size-[68px] shrink-0 rounded-[10px] border-2 border-ink shadow-xs cursor-pointer hover:scale-105 transition-transform"
-                />
-                <div className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 w-[180px] sm:w-[200px] shadow-xs">
-                  <span className="text-xs font-medium text-muted">Custom Color</span>
-                  <span className="text-base font-normal text-ink uppercase">
-                    {brandColorDraft.replace('#', '')}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsColorModalOpen(true)}
-                  className="rounded-full bg-[#f5f5f5] px-4 py-2.5 text-sm font-medium text-ink hover:bg-[#ebebeb] transition-colors cursor-pointer"
-                >
-                  Change
-                </button>
-              </div>
-            </div>
-          </section>
-
-          {/* Card 2: Business Hours */}
-          <section
-            id="business-hours"
-            className="rounded-[20px] bg-white p-5 sm:p-6 lg:p-7 shadow-[0px_4px_10px_rgba(0,0,0,0.02)] border border-[#f0ece9]/60 flex flex-col gap-6 scroll-mt-6"
-          >
-            <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold text-ink">Business Hours</h2>
-              <p className="text-[13px] text-muted">
-                Define times when customers can place delivery and pickup orders.
-              </p>
-            </div>
-
-            <div className="flex flex-col divide-y divide-[#f0ece9]">
-              {businessHours.map((item, idx) => (
-                <div
-                  key={item.day}
-                  className="flex flex-wrap sm:flex-nowrap items-center justify-between py-3.5 gap-3"
-                >
-                  <span className="w-[110px] sm:w-[120px] text-sm font-medium text-ink shrink-0">
-                    {item.day}
-                  </span>
-
-                  {/* Times */}
-                  <div className="flex items-center gap-2">
-                    {item.open ? (
-                      <>
-                        <input
-                          type="text"
-                          value={item.from}
-                          onChange={(e) => handleTimeChange(idx, 'from', e.target.value)}
-                          className="w-[84px] sm:w-[92px] rounded-md border border-[#f0ece9] bg-white px-2.5 py-1.5 text-center text-[13px] font-normal text-ink shadow-xs outline-none focus:border-brand"
-                        />
-                        <span className="text-[13px] text-[#777]">to</span>
-                        <input
-                          type="text"
-                          value={item.to}
-                          onChange={(e) => handleTimeChange(idx, 'to', e.target.value)}
-                          className="w-[84px] sm:w-[92px] rounded-md border border-[#f0ece9] bg-white px-2.5 py-1.5 text-center text-[13px] font-normal text-ink shadow-xs outline-none focus:border-brand"
-                        />
-                      </>
-                    ) : (
-                      <div className="w-[84px] sm:w-[92px] rounded-md border border-[#f0ece9] bg-[#f5f5f5] px-2.5 py-1.5 text-center text-[13px] text-[#848484]">
-                        --:--
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Toggle and Status */}
-                  <div className="flex items-center justify-end gap-3 w-[100px] shrink-0">
-                    <span
-                      className={`text-[13px] font-medium ${
-                        item.open ? 'text-[#39ab00]' : 'text-[#6a6a6a]'
-                      }`}
-                    >
-                      {item.open ? 'Open' : 'Closed'}
-                    </span>
-                    <SettingsToggle
-                      checked={item.open}
-                      onChange={() => handleToggleDay(idx)}
-                      label={`Toggle ${item.day} open or closed`}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* Card 3: Order Settings */}
-          <section
-            id="order-settings"
-            className="rounded-[20px] bg-white p-5 sm:p-6 lg:p-7 shadow-[0px_4px_10px_rgba(0,0,0,0.02)] border border-[#f0ece9]/60 flex flex-col gap-6 scroll-mt-6"
-          >
-            <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold text-ink">Order Settings</h2>
-              <p className="text-[13px] text-muted">
-                Configure delivery capabilities, kitchen prep estimates, and order throttling.
-              </p>
-            </div>
-
-            {/* Delivery Toggles */}
-            <div className="flex flex-col gap-5">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium text-ink">Accept delivery orders</span>
-                  <span className="text-xs text-muted">
-                    Allow customers to request direct delivery.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={orderSettings.acceptDelivery}
-                  onChange={(val) => setOrderSettings({ ...orderSettings, acceptDelivery: val })}
-                  label="Accept delivery orders"
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium text-ink">Accept pickup orders</span>
-                  <span className="text-xs text-muted">
-                    Allow quick carryout &amp; store pickups.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={orderSettings.acceptPickup}
-                  onChange={(val) => setOrderSettings({ ...orderSettings, acceptPickup: val })}
-                  label="Accept pickup orders"
-                />
-              </div>
-            </div>
-
-            <div className="h-px w-full bg-[#f0ece9]" />
-
-            {/* 3 Fields Row */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                <span className="text-xs font-medium text-muted">
-                  Estimated delivery time for 5 miles
-                </span>
-                <div className="flex items-center justify-between">
-                  <input
-                    type="text"
-                    value={orderSettings.estimatedDeliveryTime}
-                    onChange={(e) =>
-                      setOrderSettings({ ...orderSettings, estimatedDeliveryTime: e.target.value })
-                    }
-                    className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                    placeholder="25"
-                  />
-                  <span className="text-xs text-muted font-medium ml-1">mins</span>
-                </div>
-              </label>
-
-              <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                <span className="text-xs font-medium text-muted">Minimum Order Amount</span>
-                <input
-                  type="text"
-                  value={orderSettings.minOrderAmount}
-                  onChange={(e) =>
-                    setOrderSettings({ ...orderSettings, minOrderAmount: e.target.value })
-                  }
-                  className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                  placeholder="$10.00"
-                />
-              </label>
-
-              <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                <span className="text-xs font-medium text-muted">Delivery Radius (miles)</span>
-                <input
-                  type="text"
-                  value={orderSettings.deliveryRadius}
-                  onChange={(e) =>
-                    setOrderSettings({ ...orderSettings, deliveryRadius: e.target.value })
-                  }
-                  className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                  placeholder="5"
-                />
-              </label>
-            </div>
-
-            <div className="h-px w-full bg-[#f0ece9]" />
-
-            {/* 2 Fields Row: Tax */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 transition-colors focus-within:border-brand shadow-xs">
-                <span className="text-xs font-medium text-muted">Tax Rate (%)</span>
-                <input
-                  type="text"
-                  value={orderSettings.taxRate}
-                  onChange={(e) =>
-                    setOrderSettings({ ...orderSettings, taxRate: e.target.value })
-                  }
-                  className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                  placeholder="2.5"
-                />
-              </label>
-
-              <div className="relative flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-white px-3.5 pt-2.5 pb-3 shadow-xs">
-                <label htmlFor="tax-label-select" className="text-xs font-medium text-muted">
-                  Tax Label
-                </label>
-                <select
-                  id="tax-label-select"
-                  value={orderSettings.taxLabel}
-                  onChange={(e) =>
-                    setOrderSettings({ ...orderSettings, taxLabel: e.target.value })
-                  }
-                  className="w-full appearance-none bg-transparent text-base font-normal text-ink outline-none cursor-pointer pr-6"
-                >
-                  {TAX_LABELS.map((label) => (
-                    <option key={label} value={label}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                <HugeiconsIcon
-                  icon={ArrowDown01Icon}
-                  size={18}
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink"
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* Card 4: Notification Preferences */}
-          <section
-            id="notifications"
-            className="rounded-[20px] bg-white p-5 sm:p-6 lg:p-7 shadow-[0px_4px_10px_rgba(0,0,0,0.02)] border border-[#f0ece9]/60 flex flex-col gap-6 scroll-mt-6"
-          >
-            <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold text-ink">Notification Preferences</h2>
-              <p className="text-[13px] text-muted">
-                Control how and when you receive sound alerts and marketing digests.
-              </p>
-            </div>
-
-            <div className="flex flex-col divide-y divide-[#f0ece9]">
-              <div className="flex items-center justify-between py-3.5 gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-ink">New order alerts</span>
-                  <span className="text-xs text-muted">
-                    Trigger high-priority chime upon incoming baker orders.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={notifications.newOrders}
-                  onChange={(val) => setNotifications({ ...notifications, newOrders: val })}
-                  label="New order alerts"
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-3.5 gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-ink">Order status updates</span>
-                  <span className="text-xs text-muted">
-                    Notify staff on prep state transitions.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={notifications.statusUpdates}
-                  onChange={(val) => setNotifications({ ...notifications, statusUpdates: val })}
-                  label="Order status updates"
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-3.5 gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-ink">Low stock warnings</span>
-                  <span className="text-xs text-muted">
-                    Receive alerts when main catalog items reach crucial thresholds.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={notifications.lowStock}
-                  onChange={(val) => setNotifications({ ...notifications, lowStock: val })}
-                  label="Low stock warnings"
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-3.5 gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-ink">Daily sales summary</span>
-                  <span className="text-xs text-muted">
-                    Deliver end-of-day analytics reports to owner email.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={notifications.dailySummary}
-                  onChange={(val) => setNotifications({ ...notifications, dailySummary: val })}
-                  label="Daily sales summary"
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-3.5 gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-ink">Weekly analytics report</span>
-                  <span className="text-xs text-muted">
-                    Receive comprehensive weekly customer performance reviews.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={notifications.weeklyReport}
-                  onChange={(val) => setNotifications({ ...notifications, weeklyReport: val })}
-                  label="Weekly analytics report"
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-3.5 gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-ink">Customer reviews</span>
-                  <span className="text-xs text-muted">
-                    Get notified when high-value loyalty customers post store feedback.
-                  </span>
-                </div>
-                <SettingsToggle
-                  checked={notifications.customerReviews}
-                  onChange={(val) => setNotifications({ ...notifications, customerReviews: val })}
-                  label="Customer reviews"
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* Card 5: Account & Security */}
-          <section
-            id="account-security"
-            className="rounded-[20px] bg-white p-5 sm:p-6 lg:p-7 shadow-[0px_4px_10px_rgba(0,0,0,0.02)] border border-[#f0ece9]/60 flex flex-col gap-6 scroll-mt-6"
-          >
-            <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold text-ink">Account &amp; Security</h2>
-              <p className="text-[13px] text-muted">
-                Secure your owner dashboard login parameters and active sessions.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <label className="flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-[#f5f5f5] px-3.5 pt-2.5 pb-3 shadow-xs">
-                <span className="text-xs font-medium text-muted">Login Email</span>
-                <input
-                  type="email"
-                  value={security.loginEmail}
-                  onChange={(e) => setSecurity({ ...security, loginEmail: e.target.value })}
-                  className="w-full bg-transparent text-base font-normal text-ink outline-none"
-                  placeholder="ross@rossbakers.co"
-                />
-              </label>
-
-              <div className="relative flex flex-col justify-center gap-1 rounded-[10px] border border-line bg-[#f5f5f5] px-3.5 pt-2.5 pb-3 shadow-xs">
-                <span className="text-xs font-medium text-muted">Password</span>
-                <div className="flex items-center justify-between pr-8">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={security.password}
-                    onChange={(e) => setSecurity({ ...security, password: e.target.value })}
-                    className="w-full bg-transparent text-base font-normal text-ink outline-none tracking-widest font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink cursor-pointer"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    <HugeiconsIcon icon={showPassword ? ViewOffIcon : ViewIcon} size={18} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-[#f0ece9] gap-4">
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-ink">Two-Factor Authentication</span>
-                <span className="text-xs text-muted">
-                  Require verification code during logins for maximum account safety.
-                </span>
-              </div>
-              <SettingsToggle
-                checked={security.twoFactorEnabled}
-                onChange={(val) => setSecurity({ ...security, twoFactorEnabled: val })}
-                label="Two-factor authentication"
-              />
-            </div>
-          </section>
-        </div>
-      </div>
-
-      {/* Edit Brand Color Modal */}
-      <EditBrandColorModal
-        isOpen={isColorModalOpen}
-        initialColor={brandColorDraft}
-        shop={shopDraft}
-        state={state}
-        onSave={handleSaveBrandColor}
-        onClose={() => setIsColorModalOpen(false)}
-      />
     </div>
-  )
+    {colorEditor && store.draft && <CatalogModal title="Brand color" description="Choose a preset or a custom color for your customer app." onClose={() => setColorEditor(false)}><fieldset disabled={!editStore || busy} className="settings-fields"><ErrorMessage error={presets.error} />{presets.loading && <Skeleton variant="list" label="Loading brand colors" rows={3} />}<div className="flex flex-wrap gap-2">{presets.data?.data?.filter((p) => moreColors || p.featured).map((p) => <button key={p.id} type="button" className={buttonClass} aria-pressed={store.draft.preset === p.id} onClick={() => store.setDraft((d) => ({ ...d, preset: p.id, primary: p.primary }))}><span className="mr-2 inline-block size-3 rounded-full" style={{ background: p.primary }} />{p.name}</button>)}<button type="button" className={buttonClass} onClick={() => setMoreColors(!moreColors)}>{moreColors ? 'Fewer colours' : 'More colours'}</button></div>{logoColors.length > 0 && <div><p className="settings-hint mb-2">Colors from your logo</p><div className="flex gap-2">{logoColors.map((primary) => <button type="button" key={primary} className={buttonClass} style={{ background: primary, color: readableTextOn(primary) }} onClick={() => store.setDraft((d) => ({ ...d, preset: 'custom', primary: primary.toUpperCase() }))}>{primary}</button>)}</div></div>}<div className="rounded-xl p-5 font-semibold" style={{ background: /^#[0-9a-f]{6}$/i.test(store.draft.primary) ? store.draft.primary : '#555', color: /^#[0-9a-f]{6}$/i.test(store.draft.primary) ? readableTextOn(store.draft.primary) : '#fff' }}>{store.base.logo?.url && <img src={store.base.logo.url} alt="" className="mb-2 size-10 object-contain" />}{store.draft.appName || store.draft.name}</div><p className="settings-hint">Brand changes reach customer apps within a minute, the next time the app opens. Use Save Changes to apply your selection.</p><button type="button" className="settings-secondary self-end" onClick={() => setColorEditor(false)}>Done</button></fieldset></CatalogModal>}
+  </form>
+}
+function Field(props) {
+  return <div className="settings-field"><ApiField {...props} /></div>
+}
+const notificationDescriptions = {
+  newOrderAlerts: 'Play a chime when a new order arrives.',
+  orderStatusUpdates: 'Receive updates as orders move through preparation.',
+  lowStockWarnings: 'Save your preference for future low-stock alerts.',
+  dailySalesSummary: 'Save your preference for daily sales summaries.',
+  weeklyAnalyticsReport: 'Save your preference for weekly analytics reports.',
+  customerReviews: 'Receive updates about customer feedback.',
+}
+function SettingsSection({ id, title, description, section, children, onReload }) {
+  return <section id={id} className="settings-card"><div className="settings-card-heading"><h2>{title}</h2><p>{description}</p></div><ErrorMessage error={section.error} />{section.loading && <Skeleton variant={id === 'store-info' ? 'store' : id === 'business-hours' ? 'hours' : id === 'notifications' ? 'toggles' : 'form'} label={`Loading ${title}`} rows={id === 'notifications' ? 6 : 7} columns={3} fields={id === 'notifications' ? 6 : 4} />}{section.error && <button type="button" className={`${buttonClass} self-start`} onClick={() => { onReload?.(); section.setError(null); section.refresh() }}>Reload section</button>}{!section.loading && children}</section>
 }

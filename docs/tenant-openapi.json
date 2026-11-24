@@ -61,6 +61,34 @@
       "description": "The bakery's people, with invitations, roles, branch, switching off and signing out"
     },
     {
+      "name": "Overview",
+      "description": "The dashboard's first screen. Owner and managers"
+    },
+    {
+      "name": "Customers",
+      "description": "The bakery's customers and what they ordered. Owner and managers"
+    },
+    {
+      "name": "Analytics",
+      "description": "Sales, products, branches, busy hours and promo codes for a stretch of days. Owner and managers"
+    },
+    {
+      "name": "Store",
+      "description": "Store information in one place: business details, brand colour and logo; and opening hours for every branch"
+    },
+    {
+      "name": "Pricing",
+      "description": "Tax, promo codes and quantity discounts. Owner only"
+    },
+    {
+      "name": "Loyalty",
+      "description": "The wallet, reward points and rewards. Owner only"
+    },
+    {
+      "name": "Support",
+      "description": "FAQs, customers' requests about orders, and live chat. Owner and managers"
+    },
+    {
       "name": "Plan",
       "description": "The bakery's own Bake My App plan and how much of it is used"
     },
@@ -1958,8 +1986,8 @@
                 "keys": {
                   "summary": "A pair of test keys",
                   "value": {
-                    "publishableKey": "YOUR_STRIPE_PUBLISHABLE_KEY",
-                    "secretKey": "YOUR_STRIPE_SECRET_KEY"
+                    "publishableKey": "pk_test_REPLACE_WITH_YOUR_PUBLISHABLE_KEY",
+                    "secretKey": "sk_test_REPLACE_WITH_YOUR_SECRET_KEY"
                   }
                 }
               }
@@ -3724,6 +3752,1906 @@
           }
         }
       }
+    },
+    "/v1/tenant/pricing": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "How prices are worked out",
+        "description": "Needs `payments:manage` (owner only). Tax and whether discounts add up, and whether customers may order without an account.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pricing settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PricingSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Change how prices are worked out",
+        "description": "Send only what changes. An empty body is fine.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "taxRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "A percentage of the goods after discounts. 0 is no tax"
+                  },
+                  "pricesIncludeTax": {
+                    "type": "boolean",
+                    "description": "true: the prices already contain the tax (it is only shown). false: tax is added on top"
+                  },
+                  "discountsStack": {
+                    "type": "boolean",
+                    "description": "true: a quantity discount and a promo code both apply. false: only the better one"
+                  },
+                  "guestCheckoutEnabled": {
+                    "type": "boolean",
+                    "description": "false: customers must sign in before ordering"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PricingSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/promo-codes": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "List promo codes",
+        "description": "Needs `payments:manage`. `status` is active, inactive or all. `uses` counts live orders (a cancelled order gives its use back).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Promo codes"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Create a promo code",
+        "description": "`type` percent (value 1 to 100) or fixed (value in paisa or cents). A code is unique within the bakery (422 promo_code_taken).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code",
+                  "type",
+                  "value"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "percent",
+                      "fixed"
+                    ]
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "minOrder": {
+                    "type": "integer"
+                  },
+                  "startsAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "maxUses": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "maxUsesPerCustomer": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/v1/tenant/promo-codes/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "One promo code",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The code"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Change a promo code",
+        "description": "The code itself cannot be renamed (make a new one). isActive false switches it off.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "percent",
+                      "fixed"
+                    ]
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "minOrder": {
+                    "type": "integer"
+                  },
+                  "startsAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "maxUses": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "maxUsesPerCustomer": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Switch a promo code off",
+        "description": "Used codes are kept for the record, so this only deactivates it.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done"
+          }
+        }
+      }
+    },
+    "/v1/tenant/discounts/quantity": {
+      "get": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Quantity discount steps",
+        "description": "Needs `menu:view`. Filter with `productId` or `categoryId`. A product's own steps win over its category's; the best step the quantity reaches applies to the whole line.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The steps"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Add a step",
+        "description": "Needs `menu:edit`. Exactly one of `productId` and `categoryId`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "minQuantity",
+                  "percentOff"
+                ],
+                "properties": {
+                  "productId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "minQuantity": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 20
+                  },
+                  "percentOff": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/v1/tenant/discounts/quantity/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Change or switch off a step",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "minQuantity": {
+                    "type": "integer"
+                  },
+                  "percentOff": {
+                    "type": "number"
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Pricing"
+        ],
+        "summary": "Remove a step",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed"
+          }
+        }
+      }
+    },
+    "/v1/tenant/loyalty": {
+      "get": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Wallet and points rules",
+        "description": "Needs `payments:manage` (owner only). Both are off until the owner switches them on and sets the rates.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoyaltySettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Change the wallet and points rules",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "walletEnabled": {
+                    "type": "boolean"
+                  },
+                  "pointsEnabled": {
+                    "type": "boolean"
+                  },
+                  "pointsPerMajorUnit": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1000,
+                    "description": "Points earned for every 1.00 of goods, for example 0.01 for one point per Rs 100"
+                  },
+                  "pointsValueMinor": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "What one point is worth in the wallet, paisa or cents (100 means Rs 1)"
+                  },
+                  "streakBonusPoints": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Bonus for ordering in a second week in a row, and every week after, once a week"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoyaltySettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/loyalty/rewards": {
+      "get": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Rewards customers can aim for",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every reward, including switched-off ones"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Add a reward",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "title",
+                  "pointsCost"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 300
+                  },
+                  "pointsCost": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  },
+                  "sortOrder": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/v1/tenant/loyalty/rewards/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Change a reward",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "pointsCost": {
+                    "type": "integer"
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  },
+                  "sortOrder": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Delete a reward",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/v1/tenant/loyalty/customers/{customerId}/wallet-credit": {
+      "parameters": [
+        {
+          "name": "customerId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Loyalty"
+        ],
+        "summary": "Put money in a customer's wallet",
+        "description": "A goodwill gesture or a refund paid another way. 422 wallet_unavailable until the wallet is switched on. Written to the activity log.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "amount",
+                  "reason"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Paisa or cents"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Shown to the customer in their wallet history"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done, with the customer's new balance"
+          },
+          "404": {
+            "description": "Not this bakery's customer"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/faqs": {
+      "get": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "The help screen's questions",
+        "description": "Owner and managers only. Includes switched-off questions.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The questions"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Add a question",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "question",
+                  "answer"
+                ],
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "answer": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  },
+                  "sortOrder": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/faqs/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Change a question",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "question": {
+                    "type": "string"
+                  },
+                  "answer": {
+                    "type": "string"
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  },
+                  "sortOrder": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Delete a question",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/tickets": {
+      "get": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Customers' requests about orders",
+        "description": "`status` open, closed or all; `type` refund_status, missing_points or order_feedback. Each has the customer, the order, the message and an optional picture.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "refund_status",
+                "missing_points",
+                "order_feedback"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requests"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/tickets/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "One request",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/tickets/{id}/reply": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Answer a request and close it",
+        "description": "One answer per request. Answering again is 422 ticket_closed.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reply"
+                ],
+                "properties": {
+                  "reply": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answered"
+          },
+          "422": {
+            "description": "Already answered"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/chats": {
+      "get": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Customers who have written",
+        "description": "Most recent conversation first. `needsReply` is true when the customer wrote last.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The conversations"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/chats/stream": {
+      "get": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Live new customer messages (server-sent events)",
+        "description": "Event `ready` first, then an event `message` for each new message from any customer. Events are passed along inside one server: also reload the list when it opens and when the stream drops.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/chats/{customerId}": {
+      "parameters": [
+        {
+          "name": "customerId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "One customer's conversation",
+        "description": "Oldest first; `after` (a message id) returns only newer messages.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer and the messages"
+          },
+          "404": {
+            "description": "Not this bakery's customer"
+          }
+        }
+      }
+    },
+    "/v1/tenant/support/chats/{customerId}/messages": {
+      "parameters": [
+        {
+          "name": "customerId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Reply in a customer's chat",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "body"
+                ],
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Sent"
+          }
+        }
+      }
+    },
+    "/v1/tenant/overview": {
+      "get": {
+        "tags": [
+          "Overview"
+        ],
+        "summary": "The dashboard",
+        "description": "Owner and managers only (branch staff and riders get 403). Today against yesterday (a sale is an order that was really placed and not cancelled; a card order that was never paid is not an order), what the kitchen has on right now, customer counts, open requests and chats waiting for an answer, the last seven days (every day listed, quiet ones with zeros), the five best sellers this week and the five newest orders. Money is whole paisa or cents. ordersChange and salesChange are whole percents against yesterday, null when yesterday had none.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/customers": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "The bakery's customers",
+        "description": "Owner and managers only. People with an account at this bakery (guests have none). orders and spent count real orders that were not cancelled. q searches name, email and phone. sort is recent (default), orders, spent or name.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recent",
+                "orders",
+                "spent",
+                "name"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/customers/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "One customer",
+        "description": "Totals, average order, cancelled orders, saved addresses, favourites, the items they order most, wallet and points balances, and their ten latest orders. 404 for a customer of another bakery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer"
+          },
+          "404": {
+            "description": "Not this bakery's customer"
+          }
+        }
+      }
+    },
+    "/v1/tenant/analytics": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Sales and customer figures",
+        "description": "Owner and managers only. Everything is for the days from to to (at most 366 days, in the bakery's time zone), optionally for one branch. totals compares with the same number of days just before (ordersChange and salesChange, whole percents, null when that period had none). series is the sales chart grouped by day, week or month (a week or month is named by its first day). byStatus counts every real order including cancelled ones; the rest count sales only. customers splits buyers with an account into new (their first order ever is in these days) and returning, and counts guest orders. promos lists each promo code used in these days with its uses, the discount it gave and the sales it was on. busiestHours counts orders by hour of the day (0 to 23). 422 range_invalid or range_too_long for a bad range. Limited to 30 a minute.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "First day, YYYY-MM-DD, in the bakery's time zone. Default is 29 days before the end date",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Last day, included. Default is today",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "branchId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "groupBy",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "day",
+                "week",
+                "month"
+              ],
+              "default": "day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not this bakery's branch"
+          },
+          "422": {
+            "description": "A bad date range"
+          }
+        }
+      }
+    },
+    "/v1/tenant/store": {
+      "get": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Store information",
+        "description": "The whole Store information section in one answer: business details (name, contact, time zone, currency), the look (app name, currency symbol, colour preset and primary colour) and the logo. Needs business:view and branding:view (owner and managers). The older /business and /branding screens still work and show the same data.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Save store information",
+        "description": "Send any of the business and brand fields together; only what is sent changes, and an empty body just confirms. The colour is checked before anything is saved, so a bad colour leaves the business details unchanged. The slug, status and subscription cannot be sent (422). Needs business:edit and branding:edit (owner only). The logo is a picture, so it has its own call: POST /store/logo.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "contactEmail": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "contactPhone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "address": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 300,
+                    "description": "The bakery's address as one line"
+                  },
+                  "timezone": {
+                    "type": "string",
+                    "example": "Asia/Karachi"
+                  },
+                  "currencyCode": {
+                    "type": "string",
+                    "example": "PKR"
+                  },
+                  "appName": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "currencySymbol": {
+                    "type": "string",
+                    "example": "Rs"
+                  },
+                  "preset": {
+                    "type": "string",
+                    "description": "A colour preset id, or custom"
+                  },
+                  "primary": {
+                    "type": "string",
+                    "example": "#C15400",
+                    "description": "#RRGGBB. With a preset it must be that preset's own colour"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved, with the whole store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only the owner can change the store"
+          },
+          "422": {
+            "description": "A bad field or colour"
+          }
+        }
+      }
+    },
+    "/v1/tenant/store/logo": {
+      "post": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Upload the logo",
+        "description": "The picture is the request body itself (not a form), with its own Content-Type: image/png, image/jpeg, image/webp or image/svg+xml, up to 2 MB. fetch(url, { method: 'POST', body: file, headers: { 'Content-Type': file.type } }). The answer is the whole store, with the new logo address. Needs business:edit and branding:edit.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/svg+xml": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not a picture type we take"
+          },
+          "422": {
+            "description": "Not really a picture",
+            "or the wrong size": null
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Remove the logo",
+        "description": "Removing a logo that is not there is fine. The answer is the whole store.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenant/hours": {
+      "get": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Opening hours of every branch",
+        "description": "Needs branches:view. branches lists every branch with its own week (days 1 Monday to 7 Sunday, times HH:MM, a closed day has null times). sameForAll is true when every active branch has the same week, and then hours is that week: show one week to edit. A branch can still differ, and per-branch hours stay at PUT /branches/{id}/hours.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The hours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HoursResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Set opening hours",
+        "description": "Needs branches:edit (owner and managers). Sends one whole week (all seven days) and applies it to the branches in branchIds, or to every active branch when branchIds is left out. Each branch change is written to the activity log. 422 for a week that does not add up (closing before opening, a day twice), and branch_invalid for a branch of another bakery.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "hours"
+                ],
+                "properties": {
+                  "hours": {
+                    "type": "array",
+                    "minItems": 7,
+                    "maxItems": 7,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "day",
+                        "isClosed"
+                      ],
+                      "properties": {
+                        "day": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 7
+                        },
+                        "isClosed": {
+                          "type": "boolean"
+                        },
+                        "opensAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "09:00"
+                        },
+                        "closesAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "21:00",
+                          "description": "Use 23:59 to stay open until midnight"
+                        }
+                      }
+                    }
+                  },
+                  "branchIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved, with every branch's hours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HoursResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A bad week",
+            "or a branch that is not this bakery's": null
+          }
+        }
+      }
+    },
+    "/v1/tenant/order-settings": {
+      "get": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Order settings",
+        "description": "The Order settings section in one answer. Owner only (payments:manage). acceptDelivery and acceptPickup are bakery-wide switches that apply on top of each branch's own. deliveryMinutes is a typical delivery time (null until set). minimumOrder (paisa or cents) and deliveryRadiusKm (kilometres, null means no limit) belong to branches, so they are one value when every branch has the same and null when they differ: branchesDiffer says which. taxRate and taxLabel are the bakery's tax.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Save order settings",
+        "description": "Send any of the fields; only what is sent changes. minimumOrder and deliveryRadiusKm are set on every branch of the bakery at once (a branch can still be changed on its own afterwards under /branches). Turning acceptDelivery or acceptPickup off makes customers' quotes and orders for that kind answer 422 delivery_paused or pickup_paused. taxLabel is one of Tax, VAT, Sales Tax, GST, Service Tax; an order keeps the label it was placed with. The radius is in kilometres: a panel that shows miles converts (1 mile is 1.609344 km). Written to the activity log.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "acceptDelivery": {
+                    "type": "boolean"
+                  },
+                  "acceptPickup": {
+                    "type": "boolean"
+                  },
+                  "deliveryMinutes": {
+                    "type": "integer",
+                    "nullable": true,
+                    "minimum": 1,
+                    "maximum": 600
+                  },
+                  "minimumOrder": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Paisa or cents, on every branch"
+                  },
+                  "deliveryRadiusKm": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Kilometres, on every branch"
+                  },
+                  "taxRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "taxLabel": {
+                    "type": "string",
+                    "enum": [
+                      "Tax",
+                      "VAT",
+                      "Sales Tax",
+                      "GST",
+                      "Service Tax"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderSettingsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only the owner can change order settings"
+          },
+          "422": {
+            "description": "A bad value"
+          }
+        }
+      }
+    },
+    "/v1/tenant/notification-preferences": {
+      "get": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "My notification choices",
+        "description": "The signed-in person's own choices (everyone who can sign in to the panel has them; nobody can see or change another person's): newOrderAlerts, orderStatusUpdates, lowStockWarnings, dailySalesSummary, weeklyAnalyticsReport, customerReviews. Until a person chooses, they are true, true, true, false, true, true. The panel reads them to decide on chimes and alerts. They are stored for you; emails for the daily and weekly summaries are not sent yet.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The choices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Store"
+        ],
+        "summary": "Change my notification choices",
+        "description": "Send any of the six as true or false; the rest keep their value.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "newOrderAlerts": {
+                    "type": "boolean"
+                  },
+                  "orderStatusUpdates": {
+                    "type": "boolean"
+                  },
+                  "lowStockWarnings": {
+                    "type": "boolean"
+                  },
+                  "dailySalesSummary": {
+                    "type": "boolean"
+                  },
+                  "weeklyAnalyticsReport": {
+                    "type": "boolean"
+                  },
+                  "customerReviews": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved, with all six",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not true or false"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3746,12 +5674,19 @@
             "type": "string",
             "example": "Incorrect email or password"
           },
+          "code": {
+            "type": "string",
+            "description": "A fixed machine-readable code"
+          },
           "error": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "path": {
+                  "type": "string"
+                },
+                "code": {
                   "type": "string"
                 },
                 "message": {
@@ -4999,7 +6934,7 @@
               "publishableKey": {
                 "type": "string",
                 "nullable": true,
-                "example": "YOUR_STRIPE_PUBLISHABLE_KEY"
+                "example": "pk_test_xxxxxxxx"
               },
               "secretKeyHint": {
                 "type": "string",
@@ -5910,6 +7845,45 @@
                 "type": "boolean",
                 "description": "True only while the bakery is live. False while it is still being set up: show a coming-soon state instead of a checkout that would be refused"
               },
+              "features": {
+                "type": "object",
+                "description": "What this bakery can do right now, so the app shows only screens that work. Always on: coordinates, delivery_radius, promo_codes, rider_tracking, help, live_chat. Chosen by the owner: guest_checkout, wallet, points. Not built yet (always false): push_notifications, notification_inbox",
+                "properties": {
+                  "coordinates": {
+                    "type": "boolean"
+                  },
+                  "delivery_radius": {
+                    "type": "boolean"
+                  },
+                  "promo_codes": {
+                    "type": "boolean"
+                  },
+                  "rider_tracking": {
+                    "type": "boolean"
+                  },
+                  "help": {
+                    "type": "boolean"
+                  },
+                  "live_chat": {
+                    "type": "boolean"
+                  },
+                  "guest_checkout": {
+                    "type": "boolean"
+                  },
+                  "wallet": {
+                    "type": "boolean"
+                  },
+                  "points": {
+                    "type": "boolean"
+                  },
+                  "push_notifications": {
+                    "type": "boolean"
+                  },
+                  "notification_inbox": {
+                    "type": "boolean"
+                  }
+                }
+              },
               "theme": {
                 "type": "object",
                 "properties": {
@@ -5924,6 +7898,727 @@
                     "description": "Always #RRGGBB"
                   }
                 }
+              }
+            }
+          }
+        }
+      },
+      "PricingSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "taxRate": {
+                "type": "number"
+              },
+              "pricesIncludeTax": {
+                "type": "boolean"
+              },
+              "discountsStack": {
+                "type": "boolean"
+              },
+              "guestCheckoutEnabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "LoyaltySettingsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "walletEnabled": {
+                "type": "boolean"
+              },
+              "pointsEnabled": {
+                "type": "boolean"
+              },
+              "pointsPerMajorUnit": {
+                "type": "number"
+              },
+              "pointsValueMinor": {
+                "type": "integer"
+              },
+              "streakBonusPoints": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "OverviewResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "today": {
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "orders": {
+                    "type": "integer"
+                  },
+                  "sales": {
+                    "type": "integer"
+                  },
+                  "averageOrder": {
+                    "type": "integer"
+                  },
+                  "ordersChange": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Whole percent against yesterday"
+                  },
+                  "salesChange": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              },
+              "activeOrders": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "placed": {
+                    "type": "integer"
+                  },
+                  "accepted": {
+                    "type": "integer"
+                  },
+                  "preparing": {
+                    "type": "integer"
+                  },
+                  "ready": {
+                    "type": "integer"
+                  },
+                  "outForDelivery": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "customers": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "newToday": {
+                    "type": "integer"
+                  },
+                  "newThisWeek": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "support": {
+                "type": "object",
+                "properties": {
+                  "openRequests": {
+                    "type": "integer"
+                  },
+                  "chatsNeedingReply": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "lastSevenDays": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "orders": {
+                      "type": "integer"
+                    },
+                    "sales": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "topProducts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "integer"
+                    },
+                    "sales": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "recentOrders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "fulfilment": {
+                      "type": "string"
+                    },
+                    "customerName": {
+                      "type": "string"
+                    },
+                    "branchName": {
+                      "type": "string"
+                    },
+                    "placedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "itemCount": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "CustomerListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "isActive": {
+                  "type": "boolean"
+                },
+                "emailVerified": {
+                  "type": "boolean"
+                },
+                "joinedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "orders": {
+                  "type": "integer"
+                },
+                "spent": {
+                  "type": "integer"
+                },
+                "lastOrderAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "nullable": true
+                },
+                "walletBalance": {
+                  "type": "integer"
+                },
+                "pointsBalance": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "pagination": {
+            "type": "object"
+          }
+        }
+      },
+      "AnalyticsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "range": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "to": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "days": {
+                    "type": "integer"
+                  },
+                  "branchId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  }
+                }
+              },
+              "totals": {
+                "type": "object",
+                "properties": {
+                  "orders": {
+                    "type": "integer"
+                  },
+                  "sales": {
+                    "type": "integer"
+                  },
+                  "averageOrder": {
+                    "type": "integer"
+                  },
+                  "discounts": {
+                    "type": "integer"
+                  },
+                  "tips": {
+                    "type": "integer"
+                  },
+                  "tax": {
+                    "type": "integer"
+                  },
+                  "paidFromWallet": {
+                    "type": "integer"
+                  },
+                  "cancelledOrders": {
+                    "type": "integer"
+                  },
+                  "cancellationRate": {
+                    "type": "integer",
+                    "description": "Whole percent of placed orders"
+                  },
+                  "ordersChange": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "salesChange": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              },
+              "customers": {
+                "type": "object",
+                "properties": {
+                  "withAccount": {
+                    "type": "integer"
+                  },
+                  "new": {
+                    "type": "integer"
+                  },
+                  "returning": {
+                    "type": "integer"
+                  },
+                  "guestOrders": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "groupBy": {
+                "type": "string",
+                "enum": [
+                  "day",
+                  "week",
+                  "month"
+                ]
+              },
+              "series": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "period": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "orders": {
+                      "type": "integer"
+                    },
+                    "sales": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "byStatus": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "byFulfilment": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "byPaymentMethod": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "byBranch": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "topProducts": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "busiestHours": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "hour": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 23
+                    },
+                    "orders": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "promos": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "uses": {
+                      "type": "integer"
+                    },
+                    "discountGiven": {
+                      "type": "integer"
+                    },
+                    "sales": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "StoreResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "contactEmail": {
+                "type": "string",
+                "nullable": true
+              },
+              "contactPhone": {
+                "type": "string",
+                "nullable": true
+              },
+              "address": {
+                "type": "string",
+                "nullable": true
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "currencyCode": {
+                "type": "string"
+              },
+              "appName": {
+                "type": "string",
+                "nullable": true
+              },
+              "currencySymbol": {
+                "type": "string"
+              },
+              "preset": {
+                "type": "string"
+              },
+              "primary": {
+                "type": "string"
+              },
+              "logo": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "contentType": {
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "type": "integer"
+                  },
+                  "width": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "height": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              },
+              "businessConfirmed": {
+                "type": "boolean"
+              },
+              "brandingConfirmed": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "HoursResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "sameForAll": {
+                "type": "boolean"
+              },
+              "hours": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/HoursDay"
+                }
+              },
+              "branches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "isActive": {
+                      "type": "boolean"
+                    },
+                    "hours": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HoursDay"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "HoursDay": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7,
+            "description": "1 Monday to 7 Sunday"
+          },
+          "isClosed": {
+            "type": "boolean"
+          },
+          "opensAt": {
+            "type": "string",
+            "nullable": true,
+            "example": "09:00"
+          },
+          "closesAt": {
+            "type": "string",
+            "nullable": true,
+            "example": "21:00"
+          }
+        }
+      },
+      "OrderSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "acceptDelivery": {
+                "type": "boolean"
+              },
+              "acceptPickup": {
+                "type": "boolean"
+              },
+              "deliveryMinutes": {
+                "type": "integer",
+                "nullable": true
+              },
+              "minimumOrder": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Null when the branches differ"
+              },
+              "deliveryRadiusKm": {
+                "type": "number",
+                "nullable": true,
+                "description": "Null for no limit, or when the branches differ"
+              },
+              "taxRate": {
+                "type": "number"
+              },
+              "taxLabel": {
+                "type": "string"
+              },
+              "branchesDiffer": {
+                "type": "object",
+                "properties": {
+                  "minimumOrder": {
+                    "type": "boolean"
+                  },
+                  "deliveryRadiusKm": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "NotificationPreferencesResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "newOrderAlerts": {
+                "type": "boolean"
+              },
+              "orderStatusUpdates": {
+                "type": "boolean"
+              },
+              "lowStockWarnings": {
+                "type": "boolean"
+              },
+              "dailySalesSummary": {
+                "type": "boolean"
+              },
+              "weeklyAnalyticsReport": {
+                "type": "boolean"
+              },
+              "customerReviews": {
+                "type": "boolean"
               }
             }
           }
