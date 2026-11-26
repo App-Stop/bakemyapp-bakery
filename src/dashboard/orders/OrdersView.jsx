@@ -1,3 +1,5 @@
+import { FilterHorizontalIcon } from '@hugeicons/core-free-icons'
+import { PageOptions, RefreshButton } from '../shared/PageOptions'
 import { Skeleton, SkeletonRows } from '../shared/Skeleton'
 import { useCallback, useState } from 'react'
 import { can, dateTime, money, tenant } from '../../lib/tenant'
@@ -9,6 +11,7 @@ import { OrderDetailsDrawer } from './OrderDetailsDrawer'
 import { OrderStatusDialog } from './OrderStatusDialog'
 import { actionLabel, statusLabels } from './orderHelpers'
 import { loadOrderMetrics, rangeDates, timeRanges } from './orderMetrics'
+import { useOrderAlerts } from './useOrderAlerts'
 
 const tabs = [['active', 'Active'], ['completed', 'Completed'], ['cancelled', 'Cancelled'], ['', 'All Orders']]
 
@@ -29,6 +32,7 @@ export function OrdersView({ initialBranchId = '' }) {
   const editable = can(user, 'orders:manage')
   const list = useRemote(() => tenant.list('orders', { ...filters, status: filters.status || tab, ...(branchStaff ? { branchId: undefined } : {}), page, limit: 8 }), [JSON.stringify(filters), tab, page], { poll: 20000 })
   const summary = useRemote(() => tenant.list('orders/summary', branchStaff ? {} : { branchId: filters.branchId }), [filters.branchId], { poll: 20000 })
+  useOrderAlerts(summary.data?.data, ['tenant_owner', 'tenant_manager'].includes(user.role), setNotice, filters.branchId)
   const metrics = useRemote(() => loadOrderMetrics({ from: filters.from, to: filters.to, ...(!branchStaff ? { branchId: filters.branchId } : {}) }), [filters.from, filters.to, filters.branchId], { poll: 20000 })
   const branches = useRemote(() => can(user, 'branches:view') ? tenant.list('branches', { status: 'all' }) : Promise.resolve(null), [user.id])
   const change = (name, value) => { setFilters((previous) => ({ ...previous, [name]: value })); setPage(1) }
@@ -56,6 +60,8 @@ export function OrdersView({ initialBranchId = '' }) {
   const rows = list.data?.data || []
   const stats = metrics.data
   const refundCount = summary.data?.data?.refundsNeeded || 0
+  const extraFilterCount = [filters.fulfilment, filters.paymentMethod, filters.paymentStatus, !range && (filters.from || filters.to), filters.sort !== 'oldest'].filter(Boolean).length
+  const resetExtraFilters = () => { setRange('7d'); setFilters((previous) => ({ ...previous, fulfilment: '', paymentMethod: '', paymentStatus: '', ...rangeDates('7d'), sort: 'oldest' })); setPage(1) }
   return <div className="catalog-page orders-page">
     <header className="catalog-header"><div><h1>Orders</h1><p>{branchStaff ? `${user.branch?.name || 'Your branch'} · ` : ''}Live ticket stream, processing and delivery timeline manager.</p></div><div className="order-time-ranges" aria-label="Order date range">{timeRanges.map((value) => <button key={value} aria-pressed={range === value} onClick={() => { setRange(value); setFilters((previous) => ({ ...previous, ...rangeDates(value) })); setPage(1) }}>{value}</button>)}</div></header>
     <ErrorMessage error={error || list.error || summary.error || metrics.error || branches.error} />
@@ -89,15 +95,22 @@ export function OrdersView({ initialBranchId = '' }) {
         </tbody></table></div>
         <CatalogPagination pagination={list.data?.pagination} page={page} count={rows.length} noun={tab ? `${tab} orders` : 'orders'} onChange={setPage} disabled={list.loading} />
       </div>
-      <details className="catalog-tools"><summary>More filters & actions{refundCount > 0 && <span className="text-red-700"> · {refundCount} refunds needed</span>}</summary><div className="catalog-tools-content">
-        <Field label="Fulfilment"><select className={buttonClass} value={filters.fulfilment} onChange={(event) => change('fulfilment', event.target.value)}><option value="">Delivery and pickup</option><option value="delivery">Delivery</option><option value="pickup">Pickup</option></select></Field>
-        <Field label="Payment method"><select className={buttonClass} value={filters.paymentMethod} onChange={(event) => change('paymentMethod', event.target.value)}><option value="">All methods</option><option value="cod">Cash on delivery</option><option value="card">Card</option></select></Field>
-        <Field label="Payment status"><select className={buttonClass} value={filters.paymentStatus} onChange={(event) => change('paymentStatus', event.target.value)}><option value="">All payment statuses</option>{['unpaid', 'pending', 'paid', 'refunded', 'refund_failed'].map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}</select></Field>
-        <Field label="From (Karachi date)" type="date" value={filters.from} max={filters.to || undefined} onChange={(event) => { setRange(''); change('from', event.target.value) }} />
-        <Field label="To (Karachi date)" type="date" value={filters.to} min={filters.from || undefined} onChange={(event) => { setRange(''); change('to', event.target.value) }} />
-        <Field label="Order"><select className={buttonClass} value={filters.sort} onChange={(event) => change('sort', event.target.value)}><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></Field>
-        <button className={buttonClass} onClick={refresh} disabled={busy}>Refresh</button><button className={buttonClass} onClick={() => { changeTab(''); change('paymentStatus', 'refund_failed') }}>Refunds needed ({refundCount})</button>
-      </div></details>
+      <PageOptions title="Order filters" description="Find orders by delivery type, payment details or a specific date range." icon={FilterHorizontalIcon} toggleLabel="order filters" toggleText="filters" badge={extraFilterCount ? extraFilterCount + (extraFilterCount === 1 ? ' filter applied' : ' filters applied') : null} actions={<>
+        <button type="button" className={'page-options-button' + (refundCount > 0 ? ' page-options-refunds' : '')} aria-pressed={filters.paymentStatus === 'refund_failed'} onClick={() => { changeTab(''); change('paymentStatus', 'refund_failed') }}>Refunds needed ({refundCount})</button>
+        <RefreshButton label="Refresh orders" refreshing={list.loading || summary.loading} disabled={busy} onClick={refresh} />
+      </>}>
+        <section className="page-options-group"><h3>Delivery & payment</h3><div className="page-options-fields">
+          <Field label="Order type"><select className={buttonClass} value={filters.fulfilment} onChange={(event) => change('fulfilment', event.target.value)}><option value="">Delivery and pickup</option><option value="delivery">Delivery</option><option value="pickup">Pickup</option></select></Field>
+          <Field label="Payment method"><select className={buttonClass} value={filters.paymentMethod} onChange={(event) => change('paymentMethod', event.target.value)}><option value="">All payment methods</option><option value="cod">Cash on delivery</option><option value="card">Card</option></select></Field>
+          <Field label="Payment status"><select className={buttonClass} value={filters.paymentStatus} onChange={(event) => change('paymentStatus', event.target.value)}><option value="">All payment statuses</option>{['unpaid', 'pending', 'paid', 'refunded', 'refund_failed'].map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())}</option>)}</select></Field>
+        </div></section>
+        <section className="page-options-group"><h3>Dates & sorting</h3><div className="page-options-fields">
+          <Field label="From date" type="date" value={filters.from} max={filters.to || undefined} onChange={(event) => { setRange(''); change('from', event.target.value) }} />
+          <Field label="To date" type="date" value={filters.to} min={filters.from || undefined} onChange={(event) => { setRange(''); change('to', event.target.value) }} />
+          <Field label="Sort orders"><select className={buttonClass} value={filters.sort} onChange={(event) => change('sort', event.target.value)}><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></Field>
+        </div></section>
+        <div className="page-options-row"><p className="page-options-hint">Dates use Karachi time. These filters apply to the order list above.</p><button type="button" className="page-options-button" disabled={!extraFilterCount} onClick={resetExtraFilters}>Reset additional filters</button></div>
+      </PageOptions>
     </section>
     {selectedId && <OrderDetailsDrawer id={selectedId} revision={revision} onClose={closeDetails} renderActions={renderActions} />}
     {action && <OrderStatusDialog action={action} onClose={() => setAction(null)} onSubmit={(extra) => transition(action.order, action.status, extra)} />}

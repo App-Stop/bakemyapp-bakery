@@ -1,3 +1,7 @@
+import { createEngagementFixture } from './engagement-fixture.mjs'
+import { runEngagementChecks } from './engagement-browser.mjs'
+import { createAccountsReportingFixture } from './accounts-reporting-fixture.mjs'
+import { runAccountsReportingChecks } from './accounts-reporting-browser.mjs'
 import { runSkeletonChecks } from './skeleton-browser.mjs'
 import { createCommerceFixture } from './commerce-fixture.mjs'
 import { runCommerceChecks } from './commerce-browser.mjs'
@@ -18,7 +22,11 @@ const branchesCheck = process.argv.includes('--branches-design')
 const skeletonCheck = process.argv.includes('--skeletons')
 const teamCheck = process.argv.includes('--team') || skeletonCheck
 const paymentsCheck = process.argv.includes('--payments') || skeletonCheck
-const commerceCheck = process.argv.includes('--commerce') || skeletonCheck
+const accountsCheck = process.argv.includes('--accounts-reporting')
+const accountsFixture = createAccountsReportingFixture()
+const engagementCheck = process.argv.includes('--engagement')
+const engagementFixture = createEngagementFixture()
+const commerceCheck = process.argv.includes('--commerce') || skeletonCheck || accountsCheck || engagementCheck
 const commerceFixture = createCommerceFixture()
 const categories = [{ id: 'cat-1', name: 'Cakes', description: null, isActive: true, productCount: 1 }]
 const branch = { id: 'branch-1', name: 'Clifton', addressLine1: 'Shop 4', addressLine2: null, area: 'Clifton', city: 'Karachi', phone: '0211234567', isActive: true, isAcceptingOrders: true, status: 'open', acceptsDelivery: true, acceptsPickup: true, deliveryFee: 15000, minimumOrder: 0, prepTimeMinutes: 30, hours: Array.from({ length: 7 }, (_, i) => ({ day: i + 1, isClosed: false, opensAt: '09:00', closesAt: '21:00' })) }
@@ -68,13 +76,18 @@ const backend = httpServer(async (req, res) => {
   const send = (data, status = 200, extra = {}) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: status < 400, message: status === 403 ? 'You are not assigned to a branch yet. Ask your manager.' : status === 409 ? 'Order changed.' : 'OK', data, ...extra })) }
   try {
     if (skeletonCheck && (req.method === 'GET' || path === 'auth/refresh')) await sleep(900)
+    if (accountsCheck && accountsFixture.public({ path, body, headers: req.headers, send, setSession: (active, nextRole) => { signedIn = active; role = nextRole } })) return
     if (path === 'auth/login') { if (body.password === 'invalid-password') return send({}, 422, { message: 'Check your password.', error: [{ path: 'password', message: 'Check your password.' }] }); signedIn = true; role = body.email.startsWith('branch') ? 'branch_staff' : body.email.startsWith('manager') ? 'tenant_manager' : body.email.startsWith('viewer') ? 'viewer' : 'tenant_owner'; return send({ accessToken: 'test-token' }) }
     if (path === 'auth/refresh') return send({ accessToken: 'test-token' }, signedIn ? 200 : 401)
     assert.equal(req.headers.authorization, 'Bearer test-token', `${path} must be authenticated`)
     if (path === 'auth/logout') { signedIn = false; return send({}) }
+    if (accountsCheck && accountsFixture.protected({ path, method: req.method, body, role, url, send })) return
+    if (!commerceCheck && path === 'notification-preferences') { commerceFixture.handle({ path, method: req.method, body, send, role, url }); return }
+    if (engagementCheck && engagementFixture.handle({ path, method: req.method, body, role, url, send, res })) return
     if (commerceCheck && commerceFixture.handle({ path, method: req.method, body, send, role, url, raw, headers: req.headers })) return
     if (path === 'me') return send({ id: 'user-1', name: designCheck ? 'Ross Bakers' : 'Owner', role, roleName: role === 'branch_staff' ? 'Branch Staff' : designCheck ? 'Owner account' : 'Owner', permissions: role === 'branch_staff' ? ['orders:view', 'orders:manage'] : role === 'viewer' ? ['team:view'] : ['*'], tenant: { name: designCheck ? 'Ross Bakers Co' : 'Test Bakery', status: paymentsCheck ? 'live' : 'onboarding' }, branch: role === 'branch_staff' ? { id: branch.id, name: branch.name } : null })
     if (role === 'branch_staff' && !path.startsWith('orders')) throw new Error(`Branch staff requested forbidden area: ${path}`)
+    if (path === 'setup') return send({ items: [], progress: { done: 0, total: 0, percent: 0 }, complete: false })
     if (path === 'branding') return send({ currencySymbol: designCheck ? '$' : 'Rs' })
     if (path === 'plan') return send({ usage: { branches: { used: branches.filter((item) => item.isActive).length, limit: branchesCheck ? 10 : 3 } } })
     if (paymentsCheck && path.startsWith('payments')) {
@@ -119,7 +132,7 @@ const backend = httpServer(async (req, res) => {
       assert.ok(!('price' in body && 'sizes' in body), 'price and sizes are mutually exclusive')
       const item = { id: `product-${products.length + 1}`, ...body, category: categories.find((category) => category.id === body.categoryId), priceFrom: body.price, sizes: [], hasSizes: false, isActive: true, addonSets: [], branches: [{ id: branch.id, name: branch.name, available: true }] }; products.push(item); return send(item, 201)
     }
-    if (path === 'menu/products/order') return send(products)
+    if (path === 'menu/products/order') { const ordered = body.ids.map((id) => products.find((product) => product.id === id)); products.splice(0, products.length, ...ordered, ...products.filter((product) => !body.ids.includes(product.id))); return send(products) }
     if (/^menu\/products\//.test(path)) {
       const item = products.find((item) => item.id === path.split('/')[2])
       if (path.endsWith('/sizes')) { item.sizes = body.sizes.map((size, i) => ({ id: size.id || `size-${i}`, ...size })); item.hasSizes = !!item.sizes.length; item.price = item.hasSizes ? null : body.price; item.priceFrom = item.hasSizes ? Math.min(...item.sizes.map((size) => size.price)) : item.price }
@@ -220,11 +233,11 @@ try {
   const cdp = (method, params = {}) => new Promise((resolve, reject) => { const id = ++counter; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })) })
   const evaluate = async (expression) => { const result = await cdp('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text); return result.result.value }
   const wait = async (condition, description = condition) => { for (let i = 0; i < 200; i++) { if (await evaluate(`Boolean(${condition})`)) return; await sleep(50) } throw new Error(`Timed out: ${description}\n${await evaluate('document.body.innerText')}`) }
-  const text = (value) => `document.body.innerText.includes(${JSON.stringify(value)})`
+  const text = (value) => `document.body?.innerText?.includes(${JSON.stringify(value)})`
   const click = async (label, selector = 'button') => { await wait(`[...document.querySelectorAll(${JSON.stringify(selector)})].some(e=>(e.textContent.trim()===${JSON.stringify(label)} || e.getAttribute('aria-label')===${JSON.stringify(label)}) && !e.matches(':disabled'))`, `button ${label}`); await evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(e=>(e.textContent.trim()===${JSON.stringify(label)} || e.getAttribute('aria-label')===${JSON.stringify(label)}) && !e.matches(':disabled')).click()`); await sleep(50) }
   const fill = async (name, value) => { await wait(`document.querySelector('input[name=${JSON.stringify(name)}]')?.matches(':enabled')`, `input ${name}`); await evaluate(`(()=>{const e=document.querySelector('input[name=${JSON.stringify(name)}]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)}); e.dispatchEvent(new Event('input',{bubbles:true}));})()`); await sleep(20) }
   const closeModal = () => evaluate(`document.querySelector('button[aria-label="Close dialog"]').click()`)
-  const awaitRequest = async (method, path) => { for (let i = 0; i < 100; i++) { const found = requests.findLast((request) => request.method === method && request.path === path); if (found) return found; await sleep(50) } throw new Error(`No request: ${method} ${path}`) }
+  const awaitRequest = async (method, path, matches = () => true) => { for (let i = 0; i < 100; i++) { const found = requests.findLast((request) => request.method === method && request.path === path && matches(request)); if (found) return found; await sleep(50) } throw new Error(`No request: ${method} ${path}`) }
   const capture = async (name) => {
     await evaluate('document.fonts.ready.then(()=>true)')
     await evaluate('Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{}))).then(()=>true)')
@@ -284,6 +297,8 @@ try {
     console.log('Screenshots: artifacts/login-desktop.png and artifacts/login-mobile.png')
     return
   }
+  if (engagementCheck) { await runEngagementChecks({ click, fill, wait, text, evaluate, cdp, capture, awaitRequest, requests, failures, browserErrors, fixture: engagementFixture }); return }
+  if (accountsCheck) { await runAccountsReportingChecks({ click, fill, wait, text, evaluate, cdp, capture, awaitRequest, requests, failures, browserErrors, fixture: accountsFixture, origin }); return }
   if (skeletonCheck) { await runSkeletonChecks({ click, fill, wait, text, evaluate, cdp, capture, failures, browserErrors }); return }
   if (commerceCheck) { await runCommerceChecks({ click, fill, wait, text, evaluate, cdp, capture, awaitRequest, requests, failures, browserErrors, fixture: commerceFixture }); return }
   if (paymentsCheck) {
@@ -511,15 +526,28 @@ try {
   assert.equal((await awaitRequest('PUT', 'menu/products/product-2/sizes')).body.sizes[0].price, 9050)
   await click('Save sizes'); await sleep(100)
   assert.equal((await awaitRequest('PUT', 'menu/products/product-2/sizes')).body.sizes[0].id, 'size-0')
+  await wait(`[...document.querySelectorAll('label')].find(e=>e.textContent.trim()==='Toppings')?.querySelector('input')?.matches(':enabled')`)
   await evaluate(`(()=>{const label=[...document.querySelectorAll('label')].find(e=>e.textContent.trim()==='Toppings');label.querySelector('input').click()})()`)
   await click('Save add-on groups')
   assert.deepEqual((await awaitRequest('PUT', 'menu/products/product-2/addon-sets')).body.addonSetIds, ['addon-1'])
+  await wait(`[...document.querySelectorAll('label')].find(e=>e.textContent.trim()==='Clifton')?.querySelector('input')?.matches(':enabled')`)
   await evaluate(`(()=>{const label=[...document.querySelectorAll('label')].find(e=>e.textContent.trim()==='Clifton');label.querySelector('input').click()})()`)
   await click('Save branch availability')
   assert.deepEqual((await awaitRequest('PUT', 'menu/products/product-2/branches')).body.unavailableBranchIds, ['branch-1'])
   await evaluate(`(async()=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=220;canvas.getContext('2d').fillRect(0,0,220,220);const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));const dt=new DataTransfer();dt.items.add(new File([blob],'cake.png',{type:'image/png'}));const input=document.querySelector('input[type=file]');input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`)
   await click('Save Item'); await wait('!document.querySelector("[role=dialog]")'); await evaluate(`[...document.querySelectorAll('.menu-product')].find(e=>e.textContent.includes('Cupcake')).querySelector('button.menu-product-edit').click()`); await awaitRequest('POST', 'menu/products/product-2/photo'); await wait(text('Remove photo')); await click('Remove photo'); await awaitRequest('DELETE', 'menu/products/product-2/photo'); await closeModal()
-  await evaluate(`document.querySelector('.catalog-tools').open=true`); await click('Add-on groups'); await wait(text('Toppings')); await click('Edit'); await fill('options.0.price', '12.50'); await click('Save options')
+  await click('Show menu options')
+  assert.equal(await evaluate(`document.querySelector('[aria-label="Hide menu options"]').getAttribute('aria-expanded')`), 'true')
+  await click('Move Chocolate cake down'); await wait('document.querySelector(".menu-product h3").textContent === "Cupcake"')
+  assert.deepEqual((await awaitRequest('PUT', 'menu/products/order')).body.ids, ['product-2', 'product-1'])
+  await evaluate(`document.querySelector('.page-options').scrollIntoView({block:'start'})`); await capture('footer-menu-desktop')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await evaluate(`document.querySelector('.page-options').scrollIntoView({block:'start'})`); await capture('footer-menu-mobile')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+  await click('Add-on groups'); await wait(text('Toppings'))
+  const addonRefreshes = requests.filter((request) => request.method === 'GET' && request.path === 'menu/addon-sets').length
+  await click('Refresh menu'); await wait(`document.querySelector('.page-options-actions button').textContent.includes('Refresh menu')`)
+  assert.ok(requests.filter((request) => request.method === 'GET' && request.path === 'menu/addon-sets').length > addonRefreshes)
+  await click('Edit'); await fill('options.0.price', '12.50'); await click('Save options')
   assert.equal((await awaitRequest('PUT', 'menu/addon-sets/addon-1/options')).body.options[0].price, 1250)
   await closeModal()
   console.log('PASS Menu: categories, product creation, size IDs, add-on/branch assignments, raw photo upload/removal, option prices')
@@ -532,9 +560,18 @@ try {
   const hoursBody = (await awaitRequest('PUT', 'branches/branch-2/hours')).body.hours
   assert.equal(hoursBody.length, 7); assert.deepEqual(hoursBody[6], { day: 7, isClosed: true })
   await click('Manage Branch'); await click('Branch Open'); await click('Save Changes'); await wait('!document.querySelector("[role=dialog]")'); assert.equal((await awaitRequest('POST', 'branches/branch-1/pause')).body.paused, true)
+  await wait(text('2 of 3 active branches used'))
+  await evaluate(`document.querySelector('.page-options').scrollIntoView({block:'center'})`); await capture('footer-branches-desktop')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await evaluate(`document.querySelector('.page-options').scrollIntoView({block:'center'})`); await capture('footer-branches-mobile')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   console.log('PASS Branches: creation, integer delivery fees, automatic full-week hours editor, closed-day payload, pause')
 
   await click('Orders', 'nav button'); await wait(text('#1042')); await click('View details for order #1042'); await wait(text('Ring the bell')); assert.ok(await evaluate(text('No icing'))); await evaluate(`document.querySelector('[aria-label="Close order details"]').click()`)
+  await click('Show order filters'); await wait(text('Delivery & payment'))
+  await evaluate(`document.querySelector('.page-options').scrollIntoView({block:'center'})`); await capture('footer-orders-desktop')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await evaluate(`document.querySelector('.page-options').scrollIntoView({block:'start'})`); await capture('footer-orders-mobile')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+  await click('Hide order filters')
   await click('Accept order'); await fill('readyInMinutes', '25'); await click('Accept order', '.dash-sheet button'); await wait('!document.querySelector("[role=dialog]")')
   assert.deepEqual((await awaitRequest('POST', 'orders/order-1/status')).body, { status: 'accepted', readyInMinutes: 25 })
   await click('Start preparing'); await wait(text('Mark as ready'))
@@ -559,7 +596,7 @@ try {
   await click('Out of stock'); await click('Cancel order', '.dash-sheet button'); await wait('!document.querySelector(".dash-sheet-backdrop")')
   assert.deepEqual((await awaitRequest('POST', 'orders/order-1/status')).body, { status: 'cancelled', reason: 'Out of stock' })
   order.paymentMethod = 'card'; order.paymentStatus = 'refund_failed'; order.payment = { method: 'card', status: 'refund_failed', reference: 'pi_test_reference' }
-  await evaluate(`document.querySelector('[aria-label="Close order details"]').click()`); await evaluate(`document.querySelector('.catalog-tools').open=true`); await click('Refresh'); await wait(text('Refunds needed'))
+  await evaluate(`document.querySelector('[aria-label="Close order details"]').click()`); await click('Show order filters'); await click('Refresh orders'); await wait(text('Refunds needed'))
   await evaluate(`([...document.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('Refunds needed'))).click()`)
   await sleep(100)
   assert.equal((await awaitRequest('GET', 'orders')).params.paymentStatus, 'refund_failed')
@@ -570,7 +607,7 @@ try {
   await evaluate(`document.querySelector('#dashboard-sidebar > div.relative > button').click()`); await click('Sign out'); await wait(text('Welcome back')); await fill('email', 'branch@example.test'); await fill('password', 'long-test-password')
   const branchStart = requests.length
   await click('Sign in'); await wait(text('Clifton · Live ticket stream'))
-  assert.deepEqual(await evaluate('[...document.querySelectorAll("nav button")].map(e=>e.textContent.trim())'), ['Orders'])
+  assert.deepEqual(await evaluate('[...document.querySelectorAll("#dashboard-sidebar nav button")].map(e=>e.textContent.trim())'), ['Orders'])
   assert.equal(await evaluate('[...document.querySelectorAll("label")].some(e=>e.textContent.trim()==="Branch")'), false)
   assert.equal(requests.slice(branchStart).some((request) => /^(branches|branding|team|plan)/.test(request.path)), false)
   assert.ok(!Object.keys(await evaluate('({...localStorage})')).some((key) => /token|session/i.test(key)))
@@ -584,6 +621,7 @@ try {
   if (failures.length) console.error('Mock backend failures:', failures)
   process.exitCode = 1
 } finally {
+  engagementFixture.disconnect()
   socket?.close()
   if (browser) { browser.kill(); await sleep(500) }
   await vite?.close()

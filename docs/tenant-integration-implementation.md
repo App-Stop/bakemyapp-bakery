@@ -96,3 +96,48 @@ Settings saves only changed sections, preserves mixed branch values until edited
 The API documents no response schemas for customer detail, promo-code or quantity-discount detail/list bodies. These screens follow the guide's named fields and conventional data arrays; the customer view also accepts a nested `stats` object. Live authenticated acceptance testing remains necessary to verify those undocumented response shapes. No tenant credentials were supplied and no live records were modified.
 
 Loading placeholders use the shared `Skeleton` and `SkeletonRows` components, with shapes for tables, product lists, cards, metrics, settings and detail panels. Background polling retains existing data; skeletons are decorative, non-interactive and identified by accessible status labels. The shimmer respects `prefers-reduced-motion`. `npm run test:skeletons` checks session restoration and module loading against delayed local responses, including mobile sizing, background refresh and reduced motion.
+
+## Account access and reporting update 26 November 2026
+
+The first two work packages in [the tenant API roadmap](tenant-api-integration-roadmap.md) are implemented. The dashboard's existing navigation, card grids and responsive layout remain in place. New account screens share the existing Sign in layout, assets, colours and form components.
+
+| Operation | Frontend behavior |
+| --- | --- |
+| `POST /auth/accept-invite` | `/accept-invite?token=...` accepts an optional name and a confirmed password, stores the returned session in memory and selects the existing role-appropriate landing view. |
+| `POST /auth/forgot-password` | Sign in links to `/forgot-password`; success uses the same neutral message for every email address. |
+| `POST /auth/reset-password` | `/reset-password?token=...` validates confirmation and submits the token/password, clears local session state after success, and returns to Sign in. |
+| `GET /overview` | Live kitchen/customer/support counts and recent orders; the existing bestsellers card can switch to recent orders. |
+| `GET /analytics` | Overview date selections and Analytics use bakery-local dates and integer-money conversions, with branch/grouping controls and selectable branch/fulfilment/payment/status/promo breakdowns. |
+| `GET /audit-logs` | The existing owner timeline shows real actors, actions and changes; staff identity stays “Bake My App team.” Managers neither see the card nor request it. |
+| `PATCH /me` | Your name in Account & Security saves through Save Changes and updates the sidebar immediately; failed edits remain available for retry. |
+
+Public invitation/recovery routes skip session restoration and explicitly omit Bearer authentication. Password validation messages remain attached to their fields; missing, expired and used links have recovery guidance. A successful invitation or password reset removes the email token from the URL. The invitation response provides the user for role routing, so activation does not depend on a second successful profile request.
+
+Existing `GET /store`, `GET /branches`, and `GET`/`PATCH /notification-preferences` support these flows. Orders uses the saved new-order and status-update preferences; its chime becomes available after a user gesture. No extra alert requests are made for branch staff. Notification email delivery remains subject to the backend limitations described above.
+
+Reporting uses supported measures in the original card positions: active orders/customer totals replace sample fleet/velocity metrics, and branch sales replace undocumented category share. The LIFETIME pill stays in its existing position but is disabled with an explanation of the 366-day limit. Bestsellers show a dash for current price and availability because the reporting contract does not return them. Date selections keep older responses from being presented as the newly selected period. Rate-limit failures require a manual retry, and empty reports render without sample values.
+
+`npm run test:accounts-reporting` runs account and reporting journeys in Chrome/Edge against local fixtures, including public route isolation, missing/expired links, confirmation/field errors, activation for all four roles, session restore, live metrics, audit privacy, dates and filters, rate limits, empty reports, profile save/retry and desktop/mobile screenshots. `npm test` includes calendar boundaries, chart scaling, audit rendering and public API isolation. The existing sign-in, commerce and full module browser regressions also pass. Live authenticated acceptance with real tenant accounts remains necessary; no live tenant records were changed.
+
+## Setup support and loyalty update 26 November 2026
+
+Roadmap packages 4, 5 and 6 add Bakery setup, Your plan, Support and Loyalty destinations using the existing dashboard layout, cards, form controls and modal style. These packages connect 19 previously unused tenant operations and expand the existing Plan integration.
+
+| Feature | Operations relative to `/v1/tenant` | Behavior |
+| --- | --- | --- |
+| Setup | `GET /setup` | Shared progress on Overview and a dedicated checklist; hides unavailable steps, identifies optional steps and links to the existing feature screens. Refreshes after successful business/branding/branch/menu/payment/team saves, when entering or leaving setup/overview, and on manual refresh. The onboarding banner distinguishes completed setup from bakery activation. |
+| Plan | `GET /plan` | Owner-only subscription price in its billing currency, status, trial/renewal/cancellation dates, payment warning, branch capacity and team usage. Custom pricing and unlimited capacity are supported. Plan changes remain with Bake My App staff. |
+| FAQs | `GET`, `POST /support/faqs`; `PATCH`, `DELETE /support/faqs/{id}` | Owner/manager question editor, app visibility, display position and confirmed deletion. Failed edits retain their drafts. |
+| Requests | `GET /support/tickets`; `GET /support/tickets/{id}`; `POST /support/tickets/{id}/reply` | Paged inbox with status/type filters, customer/order context and optional picture; one reply closes a request. Closed-request conflicts reload current details and remove the reply form. |
+| Chats | `GET /support/chats`; `GET /support/chats/{customerId}`; `POST /support/chats/{customerId}/messages`; `GET /support/chats/stream` | Owner/manager conversation inbox, needs-reply indicators, paged history via `after`, message composer, deduplication and live customer messages. Overview counters link directly to the relevant Support tab. |
+| Loyalty rules | `GET`, `PATCH /loyalty` | Owner-only wallet/points enablement, earning rate, per-point wallet value and streak bonus; changed fields only, with minor-unit conversion. |
+| Rewards | `GET`, `POST /loyalty/rewards`; `PATCH`, `DELETE /loyalty/rewards/{id}` | Owner-only reward list, create/edit, visibility, points cost, display position and confirmed deletion. |
+| Wallet credit | `POST /loyalty/customers/{customerId}/wallet-credit` | Owner-only customer-detail action checks wallet availability, reviews the amount and customer-visible reason before submitting, then reloads customer and directory balances. Uncertain network/server outcomes disable resubmission and direct the owner to check the balance/activity log. |
+
+The chat stream uses authenticated fetch with credentials and the existing shared refresh queue. Its handshake has the normal request timeout; an established stream is not stopped by the JSON client's 20-second timeout. Stream parsing supports split UTF-8/CRLF frames, comments and multiline events. The client reloads the inbox and catches up the selected conversation on ready/message/disconnection, reconnects after network failures, pauses in background tabs, and aborts on navigation/logout. A 401 can refresh once; terminal 401/403/429 responses stop automatic reconnects. Manual refresh/reconnect remains available.
+
+Managers can use setup and Support but do not request owner-only Plan/Loyalty APIs or see wallet-credit controls. Branch staff keep their Orders-only navigation and do not request any new protected feature area. Rider deliveries remain the separate, unimplemented roadmap package 3.
+
+`npm run test:engagement` exercises the new React screens in a real local browser: setup routing/completion, subscription states, loyalty conversions, reward/FAQ CRUD, wallet review/success/uncertain outcomes, request replies/conflicts, chat history and live messages, stream authentication, connections lasting beyond 20 seconds, rate-limit recovery, cleanup, role restrictions and mobile screenshots. Unit tests cover money/rule validation, navigation, stream parsing, message merging and shared token renewal.
+
+The live Swagger was checked before implementation. It still leaves FAQ, ticket, reward and chat success response bodies largely unspecified; those views follow the guide's named fields and accept direct arrays or named collection wrappers. Live authenticated acceptance is needed to confirm those response bodies, production streaming/CORS behavior and email delivery. No live tenant data was changed.

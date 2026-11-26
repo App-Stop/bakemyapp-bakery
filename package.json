@@ -12,7 +12,9 @@
     "test:commerce": "node tests/browser-smoke.mjs --commerce",
     "test:login": "node tests/browser-smoke.mjs --login-only",
     "preview": "vite preview --port 4174",
-    "test:skeletons": "node tests/browser-smoke.mjs --skeletons"
+    "test:skeletons": "node tests/browser-smoke.mjs --skeletons",
+    "test:accounts-reporting": "node tests/browser-smoke.mjs --accounts-reporting",
+    "test:engagement": "node tests/browser-smoke.mjs --engagement"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.3.5",

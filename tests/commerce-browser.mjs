@@ -6,7 +6,7 @@ export async function runCommerceChecks({ click, fill, wait, text, evaluate, cdp
   await login('owner@example.test')
   await click('Customers', 'nav button'); await wait(text('Ayesha Khan')); await capture('customers-desktop')
   await click('Ayesha Khan'); await wait(text('Saved addresses')); await wait(text('Street 4')); await click('Close dialog')
-  await click('Next'); await wait(text('Showing 9')); assert.equal((await awaitRequest('GET', 'customers')).params.page, '2')
+  await click('Next'); await wait(text('Showing 9')); assert.equal((await awaitRequest('GET', 'customers', (request) => request.params.page === '2')).params.page, '2')
   await select('Sort customers', 'spent'); await fill('q', 'nobody'); await wait(text('No customers found.')); assert.equal((await awaitRequest('GET', 'customers')).params.sort, 'spent'); await fill('q', 'Ayesha'); await wait(text('Ayesha Khan'))
   await click('Settings', 'nav button'); await wait('!!document.querySelector("input[name=name]")'); await wait(text('Weekly analytics report'))
   assert.equal(await evaluate('!!document.querySelector(".settings-layout > .settings-sidebar") && !!document.querySelector(".settings-layout > .settings-content")'), true)

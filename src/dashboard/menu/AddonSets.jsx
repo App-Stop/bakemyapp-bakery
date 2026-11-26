@@ -4,8 +4,8 @@ import { changes, money, tenant, toMinor } from '../../lib/tenant'
 import { useRemote } from '../../lib/useRemote'
 import { Modal, Field, ErrorMessage, buttonClass, primaryClass, cardClass } from '../shared/ApiUI'
 
-export function AddonSets({ status, editable, symbol }) {
-  const list = useRemote(() => tenant.list('menu/addon-sets', { status }), [status])
+export function AddonSets({ status, editable, symbol, refreshKey = 0 }) {
+  const list = useRemote(() => tenant.list('menu/addon-sets', { status }), [status, refreshKey])
   const [editor, setEditor] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)

@@ -1,0 +1,11 @@
+details.catalog-form-advanced, .settings-card details.settings-advanced { padding: 0; border: 1px solid var(--color-line, #e8e8e8); border-radius: 12px; background: #fafafa; }
+details.catalog-form-advanced > summary, .settings-card details.settings-advanced > summary { position: relative; display: flex; width: 100%; flex-direction: column; gap: 3px; padding: 14px 42px 14px 14px; list-style: none; cursor: pointer; color: var(--color-ink); font-size: 13px; font-weight: 500; line-height: 1.5; }
+details.catalog-form-advanced > summary::-webkit-details-marker, .settings-card details.settings-advanced > summary::-webkit-details-marker { display: none; }
+details.catalog-form-advanced > summary::after, .settings-card details.settings-advanced > summary::after { position: absolute; top: 20px; right: 17px; width: 7px; height: 7px; border-right: 1.5px solid var(--color-muted); border-bottom: 1.5px solid var(--color-muted); content: ''; transform: rotate(45deg); }
+details.catalog-form-advanced[open] > summary::after, .settings-card details.settings-advanced[open] > summary::after { top: 23px; transform: rotate(225deg); }
+details.catalog-form-advanced > summary small, .settings-card details.settings-advanced > summary small { color: var(--color-muted); font-size: 12px; font-weight: 400; line-height: 1.5; }
+details.catalog-form-advanced > summary:focus-visible, .settings-card details.settings-advanced > summary:focus-visible { border-radius: 12px; outline: 2px solid var(--brand); outline-offset: 2px; }
+details.catalog-form-advanced[open], .settings-card details.settings-advanced[open] { background: white; }
+details.catalog-form-advanced > div { padding: 0 14px 14px; }
+.settings-card details.settings-advanced > .module-grid { margin: 0; padding: 0 14px 14px; }
+.settings-card details.settings-advanced > p { margin: 0; padding: 0 14px 14px; }

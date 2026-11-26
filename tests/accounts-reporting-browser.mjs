@@ -1,0 +1,108 @@
+import assert from 'node:assert/strict'
+
+export async function runAccountsReportingChecks({ click, fill, wait, text, evaluate, cdp, capture, awaitRequest, requests, failures, browserErrors, fixture, origin }) {
+  const navigate = async (path) => { await cdp('Page.navigate', { url: origin + path }) }
+  const logout = async () => { await evaluate(`document.querySelector('#dashboard-sidebar > div.relative > button').click()`); await click('Sign out'); await wait(text('Welcome back')) }
+  const select = async (label, value) => { await evaluate(`(()=>{const e=document.querySelector('select[aria-label="${label}"]');e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}));})()`); await new Promise((resolve) => setTimeout(resolve, 80)) }
+  const account = async (token, name = '') => {
+    await navigate('/accept-invite?token=' + token); await wait(text('Accept your invitation'))
+    if (name) await fill('name', name)
+    await fill('password', 'a secure bakery passphrase 9'); await fill('confirmation', 'a secure bakery passphrase 9'); await click('Accept invitation')
+  }
+
+  await click('Forgot password?'); await wait(text('Forgot password?'))
+  await fill('email', 'nobody@example.test'); await click('Send reset link'); await wait(text('If that email has an account, a reset link is on its way.'))
+  assert.deepEqual((await awaitRequest('POST', 'auth/forgot-password')).body, { email: 'nobody@example.test' })
+  await capture('accounts-forgot-desktop')
+  await click('Back to sign in'); await wait(text('Welcome back'))
+  const publicStart = requests.length
+  await navigate('/reset-password'); await wait(text('This link is missing its token.'))
+  assert.equal(await evaluate('document.querySelector(".login-submit").disabled'), true)
+  await navigate('/reset-password?token=expired'); await wait(text('Reset your password'))
+  await fill('password', 'a secure bakery passphrase 9'); await fill('confirmation', 'different long password 4'); await click('Reset password'); await wait(text('Passwords do not match.'))
+  assert.equal(requests.slice(publicStart).some((r) => r.path === 'auth/reset-password'), false)
+  await fill('confirmation', 'a secure bakery passphrase 9'); await click('Reset password'); await wait(text('This reset link is invalid or has expired.'))
+  await capture('accounts-expired-link')
+  await navigate('/reset-password?token=valid-reset'); await wait(text('Reset your password'))
+  await fill('password', 'a secure bakery passphrase 9'); await fill('confirmation', 'a secure bakery passphrase 9'); await click('Reset password'); await wait(text('Password reset. Sign in with your new password.'))
+  assert.equal(await evaluate('location.search'), '')
+  await account('expired'); await wait(text('This invitation is invalid or has expired.'))
+  await navigate('/accept-invite?token=valid-invite'); await wait(text('Accept your invitation'))
+  await fill('password', 'common-password'); await fill('confirmation', 'common-password'); await click('Accept invitation'); await wait(text('This password is too common.'))
+  assert.equal(await evaluate('document.querySelector("input[name=password]").getAttribute("aria-invalid")'), 'true')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await capture('accounts-invite-mobile')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+  assert.equal(requests.slice(publicStart).some((r) => r.path === 'auth/refresh'), false, 'Public token routes must skip session restoration')
+  await fill('name', 'New Bakery Owner'); await fill('password', 'a secure bakery passphrase 9'); await fill('confirmation', 'a secure bakery passphrase 9'); await click('Accept invitation')
+  await wait('!!document.querySelector("#dashboard-sidebar")'); assert.equal(await evaluate('location.pathname + location.search'), '/')
+  assert.equal(await evaluate('document.querySelector("#dashboard-sidebar").textContent.includes("New Bakery Owner")'), true)
+
+  await click('Overview', 'nav button'); await wait(text('Rs 6,543.21')); await wait(text('updated business details')); await wait(text('custom.future_action'))
+  assert.equal(await evaluate(text('Private operator name')), false)
+  assert.equal(await evaluate('!!document.querySelector("script[src*=unsafe]")'), false)
+  assert.equal(await evaluate(text('$1,247.50')), false)
+  assert.equal(await evaluate('[...document.querySelectorAll("main > div > .grid")].some(e=>e.className.includes("lg:grid-cols-[1fr_400px]"))'), true)
+  await wait(text('Demo Bakery Owner updated a product'))
+  assert.equal(await evaluate('document.querySelector("[data-audit-entry=audit-product] details").open'), false)
+  await click('View 5 changes', '[data-audit-entry=audit-product] summary')
+  await wait(text('New product badge')); await wait(text('420 kcal')); await wait(text('Dairy')); await wait(text('Cocoa'))
+  assert.equal(await evaluate('document.querySelector("[data-audit-entry=audit-product]").innerText.includes("false")'), false)
+  assert.equal(await evaluate('document.querySelector("[data-audit-entry=audit-product]").innerText.includes("[\\\"dairy\\\"")'), false)
+  await evaluate('document.querySelector("[data-audit-entry=audit-product]").scrollIntoView({block:"center"})')
+  await capture('reporting-audit-expanded-desktop')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
+  await evaluate('document.querySelector("[data-audit-entry=audit-product]").scrollIntoView({block:"start"})')
+  await capture('reporting-audit-expanded-mobile')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+  await click('View 5 changes', '[data-audit-entry=audit-product] summary')
+  await evaluate('document.querySelector("main").scrollTop = 0')
+  await capture('reporting-overview-desktop')
+  await select('Overview table', 'orders'); await wait(text('#1042 Ayesha')); await select('Overview table', 'products')
+  await click('Today'); await wait(text('Rs 1,234.50')); await wait(text('No previous sales'))
+  await click('30d'); await wait(text('Rs 6,543.21')); assert.equal((await awaitRequest('GET', 'analytics')).params.groupBy, 'day')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await capture('reporting-overview-mobile')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+  fixture.failReport = true
+  await click('Analytics', 'nav button'); await wait(text('Reports are busy. Please try again shortly.'))
+  const rateLimitCalls = requests.filter((r) => r.path === 'analytics').length
+  await new Promise((resolve) => setTimeout(resolve, 300)); assert.equal(requests.filter((r) => r.path === 'analytics').length, rateLimitCalls)
+  await click('Retry analytics'); await wait(text('-12%')); await wait(text('11:00')); await wait(text('Live Croissant'))
+  assert.equal(await evaluate('[...document.querySelectorAll("button")].find(e=>e.textContent.trim()==="LIFETIME").disabled'), true)
+  await select('Analytics branch', 'branch-1'); await wait(text('Live Croissant')); assert.equal((await awaitRequest('GET', 'analytics')).params.branchId, 'branch-1')
+  await select('Analytics grouping', 'week'); await wait(text('Live Croissant')); assert.equal((await awaitRequest('GET', 'analytics')).params.groupBy, 'week')
+  await select('Analytics breakdown', 'byPaymentMethod'); await wait(text('cod'))
+  await select('Analytics breakdown', 'promos'); await wait(text('LIVE10'))
+  await select('Analytics breakdown', 'byStatus'); await wait(text('completed'))
+  await capture('reporting-analytics-desktop')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await capture('reporting-analytics-mobile')
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+  fixture.emptyReport = true; await click('7D'); await wait(text('No sales in this period.')); await wait(text('No chart data in this period.')); fixture.emptyReport = false
+  await click('1Y'); await wait(text('Live Croissant'))
+  const year = (await awaitRequest('GET', 'analytics')).params; assert.ok((new Date(year.to) - new Date(year.from)) / 86400000 < 366)
+
+  await click('Settings', 'nav button'); await wait(text('Weekly analytics report')); await fill('profileName', 'Reject name'); await click('Save Changes'); await wait(text('Choose another display name.'))
+  assert.equal(await evaluate('document.querySelector("input[name=profileName]").value'), 'Reject name')
+  await fill('profileName', 'Updated Owner'); await click('Save Changes'); await wait(text('Settings saved.'))
+  assert.deepEqual((await awaitRequest('PATCH', 'me')).body, { name: 'Updated Owner' })
+  assert.equal(await evaluate('document.querySelector("#dashboard-sidebar").textContent.includes("Updated Owner")'), true)
+  await navigate('/'); await wait('!!document.querySelector("#dashboard-sidebar")'); assert.equal(await evaluate('document.querySelector("#dashboard-sidebar").textContent.includes("Updated Owner")'), true)
+  await logout()
+
+  const managerStart = requests.length
+  await account('manager-invite'); await wait('!!document.querySelector("#dashboard-sidebar")'); await click('Overview', 'nav button'); await wait(text('Rs 6,543.21'))
+  assert.equal(requests.slice(managerStart).some((r) => r.path === 'audit-logs'), false)
+  assert.equal(await evaluate(text('Operational Audit Timeline')), false)
+  await click('Analytics', 'nav button'); await wait(text('Live Croissant')); await logout()
+  const branchStart = requests.length
+  await account('branch-invite'); await wait(text('Clifton'))
+  assert.deepEqual(await evaluate('[...document.querySelectorAll("#dashboard-sidebar nav button")].map(e=>e.textContent.trim())'), ['Orders'])
+  assert.equal(requests.slice(branchStart).some((r) => /^(overview|analytics|audit-logs|branding|store|notification-preferences)$/.test(r.path)), false)
+  await logout()
+  const riderStart = requests.length
+  await account('rider-invite'); await wait(text('Riders use the separate Deliveries portal.'))
+  assert.equal(requests.slice(riderStart).some((r) => /^(orders|branches|overview|analytics|store|branding)/.test(r.path)), false)
+  await click('Sign out'); await wait(text('Welcome back'))
+  assert.equal(await evaluate('JSON.stringify({...localStorage}).includes("test-token")'), false)
+  assert.deepEqual(failures, []); assert.deepEqual(browserErrors, [])
+  console.log('PASS Account activation/recovery, public route isolation, four role landings, live overview/analytics/audit, rate limits, empty reports, filters, profile errors/persistence, desktop/mobile layouts')
+}

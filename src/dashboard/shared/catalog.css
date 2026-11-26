@@ -12,15 +12,15 @@
 .catalog-primary { background: var(--brand); color: var(--on-brand); font-weight: 600; }
 .catalog-select { appearance: none; padding: 12px 36px 12px 16px; border: 1px solid var(--color-line); border-radius: 100px; background: white url('/figma/catalog/cb3e9.svg') no-repeat right 10px center; font-size: 12px; max-width: 180px; }
 .catalog-notice { padding: 12px 16px; background: #effce8; color: #247000; border-radius: 12px; font-size: 13px; }
-.catalog-pagination { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 0 8px; font-size: 13px; color: var(--color-muted); }
-.catalog-pagination > div { display: flex; gap: 8px; }
-.catalog-pagination button { padding: 6px 12px; border: 1px solid var(--color-line); border-radius: 8px; background: white; color: var(--color-ink); font-size: 12px; font-weight: 600; }
+.catalog-pagination { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 0 8px; font-size: 12px; color: var(--color-muted); }
+.catalog-pagination > nav { display: flex; align-items: center; gap: 10px; }
+.catalog-pagination button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--color-line); border-radius: 9px; background: white; color: var(--color-ink); font-size: 12px; font-weight: 500; }
+.catalog-pagination button:hover:not(:disabled) { background: var(--color-surface); }
+.catalog-pagination button:disabled { opacity: .4; cursor: not-allowed; }
+.catalog-pagination button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.catalog-pagination-page { font-size: 11px; white-space: nowrap; }
 .catalog-page button:disabled, .catalog-modal button:disabled { opacity: .5; cursor: not-allowed; }
 .catalog-empty-message { padding: 48px 16px !important; text-align: center; color: var(--color-muted); font-size: 14px; }
-.catalog-tools { color: var(--color-muted); font-size: 12px; }
-.catalog-tools summary { cursor: pointer; width: fit-content; }
-.catalog-tools-content { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; padding: 16px 0; }
-.catalog-tools-content > label { display: flex; flex-direction: column; gap: 6px; }
 .catalog-page :is(button, select, summary):focus-visible, .catalog-modal :is(button, summary):focus-visible, .order-detail-panel :is(button, a):focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
 
 .order-time-ranges { width: 260px; display: flex; flex: none; gap: 4px; padding: 4px; border: 1px solid var(--color-line-strong); border-radius: 10px; background: var(--color-line); font-family: var(--font-inter); }

@@ -29,7 +29,7 @@ export function createApiClient({ baseUrl = API_URL, fetcher = (...args) => fetc
     }
     return refreshPromise
   }
-  async function request(path, { method = 'GET', body, signal, headers = {}, authenticated = path.startsWith('/v1/tenant/'), retry = true } = {}) {
+  async function request(path, { method = 'GET', body, signal, headers = {}, authenticated = path.startsWith('/v1/tenant/'), retry = true, stream = false } = {}) {
     if (!baseUrl) throw new ApiError('Set VITE_API_URL to your backend address.')
     const sentToken = accessToken
   
@@ -53,13 +53,17 @@ export function createApiClient({ baseUrl = API_URL, fetcher = (...args) => fetc
           credentials: 'include',
           headers: { ...(body !== undefined ? { 'Content-Type': raw ? body.type : 'application/json' } : {}), ...(authenticated && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...headers },
           body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
-          signal: controller.signal,
+          signal: stream && signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
         })
       } catch (error) {
         if (error.name === 'AbortError' && !timedOut) throw error
         throw new ApiError(timedOut ? 'Our servers are taking too long to answer. Please try again.' : NETWORK_MESSAGE)
       }
   
+      if (stream && response.ok) {
+        if (!response.headers.get('Content-Type')?.includes('text/event-stream') || !response.body) throw new ApiError('Live chat could not connect. Please reconnect.')
+        return response
+      }
       let json = null
       try {
         json = await response.json()
@@ -70,7 +74,7 @@ export function createApiClient({ baseUrl = API_URL, fetcher = (...args) => fetc
   
       if (response.status === 401 && authenticated && retry) {
         if (!accessToken || accessToken === sentToken) await refresh()
-        return request(path, { method, body, signal, headers, authenticated, retry: false })
+        return request(path, { method, body, signal, headers, authenticated, retry: false, stream })
       }
       if (!response.ok || !json || json.success !== true) {
         const fieldErrors = {}
@@ -94,6 +98,7 @@ export function createApiClient({ baseUrl = API_URL, fetcher = (...args) => fetc
     patch: (path, body, options) => request(path, { method: 'PATCH', body, ...options }),
     put: (path, body, options) => request(path, { method: 'PUT', body, ...options }),
     delete: (path, options) => request(path, { method: 'DELETE', ...options }),
+    stream: (path, options) => request(path, { ...options, stream: true, headers: { Accept: 'text/event-stream', ...options?.headers } }),
     refresh,
     setToken,
   }

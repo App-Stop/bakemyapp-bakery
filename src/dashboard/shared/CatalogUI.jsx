@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { Modal } from './ApiUI'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowLeft01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import './catalog.css'
+import './option-disclosure.css'
 
 export function DesignIcon({ file, className = '', folder = 'catalog' }) {
   return <img src={`/figma/${folder}/${file}.svg`} alt="" aria-hidden="true" className={`design-icon ${className}`} />
@@ -36,5 +39,5 @@ export function CatalogField({ label, name, errors = {}, children, ...props }) {
 export function CatalogPagination({ pagination, page, count, noun = 'items', onChange, disabled }) {
   if (!pagination || !pagination.totalItems) return null
   const size = pagination.itemsPerPage || 8
-  return <div className="catalog-pagination"><p>Showing {(page - 1) * size + 1}–{(page - 1) * size + count} of {pagination.totalItems} {noun}</p><div><button disabled={disabled || page <= 1} onClick={() => onChange(page - 1)}>Previous</button><button disabled={disabled || page >= (pagination.totalPages || 1)} onClick={() => onChange(page + 1)}>Next</button></div></div>
+  return <footer className="catalog-pagination"><p>Showing {count ? (page - 1) * size + 1 : 0}–{count ? (page - 1) * size + count : 0} of {pagination.totalItems} {noun}</p><nav aria-label={`${noun} pagination`}><button type="button" disabled={disabled || page <= 1} onClick={() => onChange(page - 1)}><HugeiconsIcon icon={ArrowLeft01Icon} size={15} aria-hidden="true" />Previous</button><span className="catalog-pagination-page" aria-live="polite">Page {page} of {pagination.totalPages || 1}</span><button type="button" disabled={disabled || page >= (pagination.totalPages || 1)} onClick={() => onChange(page + 1)}>Next<HugeiconsIcon icon={ArrowRight01Icon} size={15} aria-hidden="true" /></button></nav></footer>
 }

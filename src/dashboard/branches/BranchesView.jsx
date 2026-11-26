@@ -1,3 +1,5 @@
+import { Store03Icon } from '@hugeicons/core-free-icons'
+import { PageOptions, RefreshButton } from '../shared/PageOptions'
 import { Skeleton } from '../shared/Skeleton'
 import { useState } from 'react'
 import { can, money, tenant } from '../../lib/tenant'
@@ -64,7 +66,13 @@ export function BranchesView({ onNavigateToOrders }) {
         <div className="branch-card-actions">{can(user, 'orders:view') && <button className="catalog-button" onClick={() => onNavigateToOrders(branch.id)}>View Orders</button>}{editable && <button className="catalog-button catalog-primary" disabled={busy} onClick={() => edit(branch)}>Manage Branch</button>}</div>
       </article>)}</div>
     </section>
-    <details className="catalog-tools"><summary>More branch options</summary><div className="catalog-tools-content">{usage && <p>{usage.used} of {usage.limit ?? 'unlimited'} branches used</p>}<button className="catalog-button" onClick={refresh}>Refresh</button></div></details>
+    <PageOptions title={usage ? 'Branch capacity' : 'Branch list'} description={usage ? 'Your plan counts active branches. Inactive locations keep their order history.' : 'Keep branch details and performance up to date.'} icon={Store03Icon} collapsible={false} actions={<RefreshButton label="Refresh branches" refreshing={list.loading || plan.loading} disabled={busy} onClick={refresh} />}>
+      {usage && <div className="page-options-capacity">
+        <div className="page-options-row"><strong>{usage.limit == null ? usage.used + ' active branches' : usage.used + ' of ' + usage.limit + ' active branches used'}</strong><span className="page-options-hint">{usage.limit == null ? 'Unlimited branches on your plan' : Math.max(0, usage.limit - usage.used) + ' remaining'}</span></div>
+        {usage.limit != null && <div className="page-options-progress" role="progressbar" aria-label="Active branch capacity" aria-valuemin={0} aria-valuemax={usage.limit} aria-valuenow={usage.used} aria-valuetext={usage.used + ' of ' + usage.limit + ' active branches used'}><span style={{ width: Math.min(100, usage.limit ? usage.used / usage.limit * 100 : 100) + '%' }} /></div>}
+        {usage.limit != null && usage.used >= usage.limit && <p className="page-options-hint">Your plan is full. Contact us to add more active branches.</p>}
+      </div>}
+    </PageOptions>
     {editor && <BranchForm key={editor.id || 'new'} branch={editor} onClose={() => setEditor(null)} onOpenHours={(branch) => { setEditor(null); setHours(branch) }} onSaved={async (branch, created) => { setEditor(null); if (created) setHours(branch); await refresh() }} />}
     {hours && <BranchHours key={hours.id} branch={hours} editable={editable} onClose={() => setHours(null)} onSaved={list.refresh} />}
   </div>
